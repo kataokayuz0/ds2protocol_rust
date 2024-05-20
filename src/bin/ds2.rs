@@ -1,4 +1,3 @@
-use nalgebra::DMatrix;
 use num_bigint::Sign;
 use num_bigint::BigInt;
 use num_traits::ToPrimitive;
@@ -1390,12 +1389,12 @@ fn ready_verification(
 
     // commitment_keyの計算
     let ready_ck = h3(message, &pk, ck_limit);
-    println!("ready_ck: {:?}", ready_ck);
+    // println!("ready_ck: {:?}", ready_ck);
 
 
     // challengeの計算
     let ready_derived_challenge = h0(&com, message, &pk, N, kappa, &Q);
-    println!("ready_derived_challenge: {:?}", ready_derived_challenge);
+    // println!("ready_derived_challenge: {:?}", ready_derived_challenge);
 
     // a_bar とsign_znの乗算
     let ready_w_left: Vec<Polynomial> = multiply_polynomial_matrix_with_vector(a_bar, sign_zn, q);
