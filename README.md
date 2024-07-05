@@ -4,6 +4,7 @@ To actually run the entire protocol, run `src/bin/ds2.rs` with the following com
 
 ```bash
 cargo run --bin ds2
+```
 
 This process creates a share of the public and private keys, respectively.
 ![This process creates a share of the public and private keys, respectively.](image/ds2gen.png "DS2_gen")
