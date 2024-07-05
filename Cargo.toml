@@ -21,6 +21,8 @@ rustnomial = "0.3.2"
 num-complex = "0.4.5"
 rustfft = "6.2.0"
 concrete-ntt = "0.1.2"
+rug = "1.24.1"
+rand_chacha = "0.3.1"
 
 [dev-dependencies]
 criterion = "0.5.1"
@@ -28,6 +30,18 @@ criterion = "0.5.1"
 [[bin]]
 name = "ds2"
 path = "src/bin/ds2.rs"
+
+[[bin]]
+name = "gen"
+path = "src/bin/gen.rs"
+
+[[bin]]
+name = "sign"
+path = "src/bin/sign.rs"
+
+[[bin]]
+name = "verify"
+path = "src/bin/verify.rs"
 
 [[bench]]
 name = "benchmark_test"

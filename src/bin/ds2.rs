@@ -9,7 +9,6 @@ use rand::Rng;
 use rand::SeedableRng;
 use rand_distr::{Distribution, Normal, Uniform};
 use sha2::{Digest, Sha256};
-use std::f64::consts::PI;
 use std::fmt::Write;
 use std::ops::Sub;
 use std::ops::{Add, Mul};
@@ -17,21 +16,21 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use std::fmt;
 use concrete_ntt::native128::Plan32;
+use rug::{Assign, Float};
+use rug::ops::{Pow};
+use rand_chacha::ChaCha20Rng;
 
 const K: usize = 2;
-const L: usize = 1;
-const Q: i128 = 79164837199873;
+const L: usize = 2;
+const Q: i128 = 862214684689;
 // const PRIMITIVE_ROOT: i128 = 79; //原始根
-const N: usize = 256;
+const N: usize = 1024;
 
 fn main() {
     let start = Instant::now();
 
-    let sigma_gen: i128 = 3;
-    let sampler = TableSampler::new(sigma_gen);
-    let party_number: usize = 2;
-
-    let a_n = generate_random_matrix_fromtable(K, L, &sampler, Q, party_number);
+    let party_number: usize = 1000;
+    let a_n = generate_fromuniform_random_matrix(K, L, Q, party_number, N);
     // println!("Random matrix A_n: {:?}", a_n);
 
     // println!("Length of a_n: {}", a_n.len());
@@ -82,7 +81,7 @@ fn main() {
     // println!("Public random matrix A_bar: {:?}", a_bar);
 
     let eta: i128 = 5;
-    let eta_clone: f64 = eta as f64;
+    let eta_f64: f64 = eta as f64;
 
     let sn: Vec<Vec<Polynomial>> = (0..party_number)
         .map(|_| sample_from_s_eta(eta, L + K, N, Q))
@@ -95,6 +94,8 @@ fn main() {
 
     let t_sum = sum_tn_matrices(&tn, &Q);
     // println!("t_sum: {:?}", t_sum);
+    let size_of_t_sum = bit_size_of_polynomials_vec(&t_sum);
+    println!("Size of t_sum: {}", &size_of_t_sum);
 
     let g_prime_n: Vec<String> = tn
         .iter()
@@ -119,54 +120,43 @@ fn main() {
         println!("commitment is verified.")
     }
 
-    let pk = (a_sum.clone(), t_sum.clone());
+    let pk:(Vec<Polynomial>, Vec<Polynomial>) = (a_sum.clone(), t_sum.clone());
     let pk_copy = pk.clone();
-    // println!("Local output for Pn: {:?}", (skn, pk));
+    // println!("Local output for Pn: {:?}", (sn, pk));
 
     let message = "example_message";
-    let ck_limit = 5;
-
-    let ck = h3(message, &pk_copy, &ck_limit);
-    println!("Per-message commitment key ck: {}", ck);
 
     let f64_party_number = party_number as f64;
 
-    let alpha: f64 = 11.0 * f64_party_number * 15.0;
-    let kappa_usize = 60;
+    let alpha: f64 = 11.0 * f64_party_number * 10.0;
+    let kappa_usize = 5;
     let gamma: f64 = 1.1;
     let t: f64 = 12.0;
-    let epsilon: f64 = 0.1;
-    let n: f64 = 256.0;
-    let l: f64 = 2.0;
-    let k: f64 = 1.0;
+    let n: f64 = N as f64;
+    let l: f64 = L as f64;
+    let k: f64 = K as f64;
     let kappa: f64 = kappa_usize as f64;
 
-    let large_t = kappa * eta_clone * (n * (l + k)).sqrt();
-    println!("large_t: {}", large_t);
+    let large_t = kappa * eta_f64 * (n * (l + k)).sqrt();
+    // println!("large_t: {}", large_t);
     let sigma = &alpha * &large_t;
-    println!("sigma: {}", sigma);
+    // println!("sigma: {}", sigma);
     let sampler = GaussianSampler::new(sigma);
     let large_b = gamma * sigma * (n * (l + k)).sqrt();
 
     let m_f64 = ((t / alpha) + (1.0 / (2.0 * alpha.powi(2)))).exp();
-    println!("M: {}", m_f64);
+    // println!("M: {}", m_f64);
     let mn = m_f64.powf(f64_party_number);
     println!("M^n: {}", mn);
-
-    let trapq_candidate = n.powf(2.0 + epsilon);
-    let trapq = next_prime(trapq_candidate.to_u64().unwrap());
-
-    let trapl = trapq.to_f64().unwrap().log2().ceil() as usize;
-    let trapw = trapq.to_f64().unwrap().log2().ceil() as usize;
+    let trapl = Q.to_f64().unwrap().log(50.0).ceil() as usize;
+    let trapw = Q.to_f64().unwrap().log(50.0).ceil() as usize;
     let s = &alpha * &large_t * (2.0 * std::f64::consts::PI).sqrt();
 
-    println!("trapl: {}, trapw: {}, s: {}", trapl, trapw, s);
-
-    let party_number = party_number as usize;
+    // println!("trapl: {}, trapw: {}, s: {}", trapl, trapw, s);
 
     let mut last_rejec_zn_result: Option<Vec<Vec<Polynomial>>> = None;
     let mut last_derived_challenge: Option<Polynomial> = None;
-    let mut sampled_rn: Vec<Polynomial> = Vec::new();
+    let mut sampled_rn: Vec<Vec<Polynomial>> = Vec::new();
     let mut comn_per_party: Vec<Vec<Vec<Polynomial>>> = Vec::new();
     let mut ahat: Vec<Vec<Polynomial>> = Vec::new();
     let mut wn: Vec<Vec<Polynomial>> = Vec::new();
@@ -189,14 +179,21 @@ fn main() {
         //     println!("wn is empty.");
         // }
 
-        let k = K;
-        sampled_rn = samplern(party_number, trapl, trapw, eta_clone, Q);
+        sampled_rn = samplern(party_number, trapl, trapw, &sampler, Q);
         // println!("sampled_rn: {:?}", sampled_rn);
+        // sampled_rnの行列の大きさを確認
+        let rows = sampled_rn.len();
+        let cols = sampled_rn[0].len();
+        println!("sampled_rn has {} rows and {} columns.", rows, cols);
 
-        ahat = c_gen(&sampler, Q, trapl, trapw);
-        // println!("ahat: {:?}", ahat);
+        // H3関数として、cgenを使用してコミットメントキー(ck=ahat)を生成する
+        ahat = c_gen(message, &pk, Q, &trapl, &trapw);
+        let rows = ahat.len();
+        let cols = ahat[0].len();
+        println!("Commitment key ck has {} rows and {} columns.", rows, cols);
 
-        let result = commitck(&wn, &sampled_rn, &ahat, party_number as usize);
+        let result = commitck(&wn, &sampled_rn, &ahat, party_number);
+        // println!("result: {:?}", result);
         let (zero, comn) = result;
         comn_per_party = comn;
         // let rows = comn_per_party.len();
@@ -206,6 +203,8 @@ fn main() {
 
         com = setcom(comn_per_party.clone(), K);
         // println!("Commitment com: {:?}", com);
+        let size_of_com = bit_size_of_polynomials_vec_vec_vec(&com);
+        println!("Size of com: {}", &size_of_com);
 
         let derived_challenge = h0(&com, message, &pk_copy, N, &kappa_usize, &Q);
         // println!("Derived challenge: {:?}", derived_challenge);
@@ -222,7 +221,7 @@ fn main() {
                 println!("Accepted signature shares");
                 let rows = rejec_zn_result.len();
                 let cols = rejec_zn_result[0].len();
-                println!("rejec_zn_result has {} rows and {} columns.", rows, cols);
+                // println!("rejec_zn_result has {} rows and {} columns.", rows, cols);
                 last_rejec_zn_result = Some(rejec_zn_result);
                 last_derived_challenge = Some(derived_challenge.clone());
                 break;
@@ -254,6 +253,11 @@ fn main() {
         } else {
             println!("Let's go!");
             let (sign_zn, sign_rn) = compute_signature(&rejec_zn_result, &sampled_rn);
+            let size_of_zn = bit_size_of_polynomials_vec(&sign_zn);
+            println!("Size of zn: {}", &size_of_zn);
+            let size_of_rn = bit_size_of_polynomials_vec(&sign_rn);
+            println!("Size of rn: {}", &size_of_rn);
+            // println!("sign_rn: {:?}", sign_rn);
             let ver_w = ready_verification(
                 &a_bar,
                 derived_challenge,
@@ -263,7 +267,8 @@ fn main() {
                 &sign_zn,
                 &com,
                 &message,
-                &ck_limit,
+                &trapl,
+                &trapw,
                 &t_sum,
             );
             // println!("t_sum: {:?}", &pk_copy.1[0]);
@@ -307,6 +312,36 @@ impl Polynomial {
             }
         }
         Polynomial { coeffs, mod_val }
+    }
+
+    // このPolynomialの情報量をビット単位で返す
+    pub fn bit_size(&self) -> usize {
+        let mut total_bits = 0;
+        for &coeff in &self.coeffs {
+            total_bits += Self::bit_size_of_coeff(coeff);
+        }
+        total_bits
+    }
+
+    // 各係数の情報量（ビット数）を計算するヘルパーメソッド
+    fn bit_size_of_coeff(coeff: i128) -> usize {
+        if coeff == 0 {
+            1 // 0は1ビットで表現できる
+        } else {
+            // 係数の絶対値の対数を取り、それに基づいてビット数を計算
+            let bits = (coeff.abs() as f64).log2().ceil() as usize; // 対数を取り、切り上げる
+            bits
+        }
+    }
+
+    // Polynomialのデータをバイト配列に変換するメソッド
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        for &coeff in &self.coeffs {
+            // 各係数をバイト配列に変換し、結果のベクターに追加する
+            bytes.extend_from_slice(&coeff.to_le_bytes());
+        }
+        bytes
     }
 
     fn to_string(&self) -> String {
@@ -469,63 +504,62 @@ impl GaussianSampler {
     }
 }
 
-struct TableSampler {
-    values: Arc<Vec<i128>>, // 値をi128型で保持
-    dist: Uniform<usize>,   // 等確率でのインデックス抽出
-    rng: Mutex<ThreadRng>,  // ランダム数生成器
+// Vec<Polynomial> の情報量を計算する関数
+fn bit_size_of_polynomials_vec(polynomials: &[Polynomial]) -> usize {
+    polynomials.iter().map(|p| p.bit_size()).sum()
 }
 
-impl TableSampler {
-    fn new(sigma: i128) -> Self {
-        let range = (sigma * 6) as i128; // f64からi128への型変換を明示
-        let values: Vec<i128> = (-range..=range).collect(); // f64からi128への範囲生成
-        let dist = Uniform::new(0, values.len());
-        let rng = Mutex::new(thread_rng());
-        Self {
-            values: Arc::new(values),
-            dist,
-            rng,
-        }
-    }
-
-    fn sample(&self) -> i128 {
-        let mut rng = self.rng.lock().unwrap();
-        let index = self.dist.sample(&mut *rng);
-        let sampled_value = self.values[index]; // 直接i128値を返す
-        sampled_value
-    }
+// Vec<Vec<Polynomial>> の情報量を計算する関数
+fn bit_size_of_polynomials_vec_vec(vec: &[Vec<Polynomial>]) -> usize {
+    vec.iter().map(|inner_vec| bit_size_of_polynomials_vec(inner_vec)).sum()
 }
 
-fn gaussian_sample_polynomial_fromtable(sampler: &TableSampler, q: i128) -> Polynomial {
-    let coeffs: Vec<i128> = (0..N)
+// Vec<Vec<Vec<Polynomial>>> の情報量を計算する関数
+fn bit_size_of_polynomials_vec_vec_vec(vec: &[Vec<Vec<Polynomial>>]) -> usize {
+    vec.iter().map(|inner_vec_vec| bit_size_of_polynomials_vec_vec(inner_vec_vec)).sum()
+}
+
+fn uniform_sample_polynomial(q: i128, n: usize) -> Polynomial {
+    let mut rng = rand::thread_rng();
+    let range = Uniform::new(-(q / 2), q / 2 + 1);  // q/2 を含むために +1
+    let coeffs: Vec<i128> = (0..n)
         .map(|_| {
-            let sample = sampler.sample();
-            (sample + q) % q // 負のサンプルを適切に扱い、qモジュロを行います。
+            let sample = range.sample(&mut rng);
+            (sample + q) % q 
         })
         .collect();
 
     Polynomial::new(coeffs, q)
 }
 
-fn generate_random_matrix_fromtable(
-    k: usize,
-    l: usize,
-    sampler: &TableSampler,
-    q: i128,
-    party_number: usize,
-) -> Vec<Vec<Polynomial>> {
+fn generate_fromuniform_random_matrix(k: usize, l: usize, q: i128, party_number: usize, n: usize) -> Vec<Vec<Polynomial>> {
     let mut matrices: Vec<Vec<Polynomial>> = Vec::with_capacity(party_number);
     for _ in 0..party_number {
         let matrix: Vec<Polynomial> = (0..k * l)
-            .map(|_| gaussian_sample_polynomial_fromtable(sampler, q))
+            .map(|_| uniform_sample_polynomial(q, n))
             .collect();
         matrices.push(matrix);
     }
     matrices
 }
 
-// ガウスサンプルに基づいて多項式を生成する関数
-fn gaussian_sample_polynomial(sampler: &GaussianSampler, q: i128) -> Polynomial {
+// ガウスサンプルに基づいて多項式を生成する関数(ahat行列内多項式)
+fn gaussian_sample_polynomial<R: Rng>(
+    rng: &mut R,
+    q: i128,
+) -> Polynomial {
+    let coeffs: Vec<i128> = (0..N)
+        .map(|_| {
+            let sample: i128 = rng.gen_range(-(q as i128 / 2)..=(q as i128 / 2));
+            (sample + q) % q // qで剰余を取る
+        })
+        .collect();
+
+    Polynomial::new(coeffs, q)
+}
+
+// ガウスサンプルに基づいて多項式を生成する関数(yn、rn行列内多項式)
+fn gaussian_sample_polynomial_for_yn_rn(sampler: &GaussianSampler, q: i128) -> Polynomial {
     let coeffs: Vec<i128> = (0..N)
         .map(|_| {
             let sample = sampler.sample() as i128; // サンプリングされた整数をf64にキャスト
@@ -542,58 +576,55 @@ fn gaussian_sample_polynomial(sampler: &GaussianSampler, q: i128) -> Polynomial 
 }
 
 // kxlのランダム多項式行列を生成し、それらをparty_numberの数だけリストに格納する関数
-fn generate_random_matrix(
+fn generate_random_matrix<R: Rng>(
+    rng: &mut R,
     k: usize,
     l: usize,
-    sampler: &GaussianSampler,
     q: i128,
     party_number: usize,
 ) -> Vec<Vec<Polynomial>> {
     let mut matrices: Vec<Vec<Polynomial>> = Vec::with_capacity(party_number);
     for _ in 0..party_number {
         let matrix: Vec<Polynomial> = (0..k * l)
-            .map(|_| gaussian_sample_polynomial(sampler, q))
+            .map(|_| gaussian_sample_polynomial(rng, q))
             .collect();
         matrices.push(matrix);
     }
     matrices
 }
 
-//可逆な1*1行列を返す関数
-fn generate_invertible_matrix(sampler: &GaussianSampler, q: i128) -> Vec<Vec<Polynomial>> {
+// 可逆な1*1行列を返す関数
+fn generate_invertible_matrix<R: Rng>(
+    rng: &mut R,
+    q: i128,
+) -> Vec<Vec<Polynomial>> {
     loop {
-        let ahat1_1: Vec<Vec<Polynomial>> = vec![vec![gaussian_sample_polynomial(&sampler, q)]];
-        // ここでは、多項式が0でないことを確認することで「可逆」と仮定
+        let ahat1_1: Vec<Vec<Polynomial>> = vec![vec![gaussian_sample_polynomial(rng, q)]];
+        // For 1*1 matrices, we assume here that the polynomial is "invertible" by checking that it is non-zero
         if !ahat1_1[0][0].coeffs[0].is_zero() {
             return ahat1_1;
         }
     }
 }
 
-// 行列とベクトルの乗算を行う関数
+// Multiply a polynomial matrix by a vector of polynomials
 fn multiply_polynomial_matrix_vector(
-    a_bar: &[Vec<Polynomial>],
-    sn: &[Vec<Polynomial>],
-    q: &i128,
+    matrix: &[Vec<Polynomial>],
+    vector: &[Vec<Polynomial>],
+    mod_value: &i128,
 ) -> Vec<Vec<Polynomial>> {
-    let p = sn.len(); // snの行数（列数ではないことに注意）
-    let mut result = Vec::with_capacity(p);
+    let num_columns = vector.len(); // vectorの行数
+    let mut result = Vec::with_capacity(num_columns);
 
-    // 各snの行に対して計算を行う
-    for column in 0..p {
+    for column in 0..num_columns {
         let mut column_result = Vec::new();
 
-        // a_bar の各行に対する計算を行います
-        for a_bar_row in a_bar.iter() {
-            let mut result_poly = Polynomial::new(vec![0; a_bar_row[0].coeffs.len()], *q);
+        for matrix_row in matrix.iter() {
+            let mut result_poly = Polynomial::new(vec![0; matrix_row[0].coeffs.len()], *mod_value);
 
-            // a_barの行とsnの特定の列の要素ごとの乗算と加算
-            for (a_poly, s_poly) in a_bar_row.iter().zip(&sn[column]) {
-                let product = a_poly.mul_ntt(s_poly);
-                // println!("product: {:?}", product);
-                // let product_lifted = polynomial_to_f64_vec(&product);
-                // let calculate_norm = calculate_norm(&product_lifted);
-                // println!("calculate_norm: {:?}", calculate_norm);
+            // matrixの行とvectorの特定の列の要素ごとの乗算と加算
+            for (matrix_poly, vector_poly) in matrix_row.iter().zip(&vector[column]) {
+                let product = matrix_poly.mul_ntt(vector_poly);
                 result_poly = result_poly.add_ref(&product);
             }
 
@@ -697,63 +728,6 @@ fn random_oracle_commitment_polynomials(
     format!("{:x}", hash_result)
 }
 
-// ランダムオラクルH3関数
-fn h3(message: &str, public_key: &(Vec<Polynomial>, Vec<Polynomial>), ck_limit: &i32) -> BigInt {
-    let mut combined = String::new();
-    write!(&mut combined, "{}", message).expect("Failed to write message to string");
-
-    for poly in &public_key.0 {
-        write!(&mut combined, "{}", poly.to_string())
-            .expect("Failed to write polynomial to string");
-    }
-
-    for poly in &public_key.1 {
-        write!(&mut combined, "{}", poly.to_string())
-            .expect("Failed to write polynomial to string");
-    }
-
-    let mut hasher = Sha256::new();
-    hasher.update(combined.as_bytes());
-    let hash_output = hasher.finalize();
-
-    let hash_int = BigInt::from_bytes_be(Sign::Plus, &hash_output);
-    let two_pow_256 = BigInt::from(2).pow(256);
-    let scale_factor = BigInt::from(2 * ck_limit) * &two_pow_256 / (&two_pow_256 - BigInt::one());
-    let scaled_value = (hash_int * scale_factor / &two_pow_256) - BigInt::from(ck_limit.clone());
-
-    scaled_value
-}
-
-// 素数判定関数
-fn is_prime(n: u64) -> bool {
-    if n <= 1 {
-        return false;
-    }
-    if n <= 3 {
-        return true;
-    }
-    if n % 2 == 0 || n % 3 == 0 {
-        return false;
-    }
-    let mut i: u64 = 5;
-    while i * i <= n {
-        if n % i == 0 || n % (i + 2) == 0 {
-            return false;
-        }
-        i += 6;
-    }
-    true
-}
-
-// 次の素数を見つける関数
-fn next_prime(n: u64) -> u64 {
-    let mut candidate = n + 1;
-    while !is_prime(candidate) {
-        candidate += 1;
-    }
-    candidate
-}
-
 //a. sample yn and compute wn
 // `sampleyn` 関数: 各パーティごとに (l+k) * 1 の多項式ベクトルを生成
 fn sampleyn(
@@ -766,7 +740,7 @@ fn sampleyn(
     (0..party_number)
         .map(|_| {
             (0..(l + k))
-                .map(|_| gaussian_sample_polynomial(&sampler, q))
+                .map(|_| gaussian_sample_polynomial_for_yn_rn(&sampler, q))
                 .collect()
         })
         .collect()
@@ -783,73 +757,69 @@ fn computewn(
 
 //b. compute comn with rn
 
-// rの範囲内で整数をサンプリングする関数
-fn sample_from_s_r(size: f64) -> i128 {
-    let mut rng = thread_rng();
-    let normal = Normal::new(0.0, size).expect("Failed to create normal distribution");
-    let sampled_value = normal.sample(&mut rng);
-    sampled_value.round() as i128 // f64の値を四捨五入してi128型にキャスト
-}
-
-// Polynomialのベクターを生成する関数
+// `samplern` 関数: 各パーティごとに (trapl+2trapw) の長さを持つ多項式ベクトルを生成
 fn samplern(
     party_number: usize,
     trapl: usize,
     trapw: usize,
-    eta: f64,
-    mod_val: i128,
-) -> Vec<Polynomial> {
-    let mut sampled_rn = Vec::new();
-    for _ in 0..party_number {
-        let mut polynomial_coeffs = Vec::new();
-        for _ in 0..(trapl + 2 * trapw) {
-            let sampled_value = sample_from_s_r(eta);
-            polynomial_coeffs.push(sampled_value % mod_val); // サンプリングされた値をmod_valで剰余
-        }
-        let polynomial = Polynomial::new(polynomial_coeffs, mod_val);
-        sampled_rn.push(polynomial);
-    }
-    sampled_rn
+    sampler: &GaussianSampler,
+    q: i128,
+) -> Vec<Vec<Polynomial>> {
+    (0..party_number)
+        .map(|_| {
+            (0..(trapl + 2 * trapw))  // (trapl + 2trapw) の長さのベクトルを生成
+                .map(|_| gaussian_sample_polynomial_for_yn_rn(sampler, q))
+                .collect::<Vec<Polynomial>>()
+        })
+        .collect()
 }
 
-// CGen関数のRust実装
-fn c_gen(sampler: &GaussianSampler, q: i128, trapl: usize, trapw: usize) -> Vec<Vec<Polynomial>> {
-    let ahat1_1 = generate_invertible_matrix(sampler, q);
-    let mut ahat1_j = generate_random_matrix(1, trapl + 2 * trapw - 1, sampler, q, 1)[0].clone();
+// CGen関数の改修版
+fn c_gen(message: &str, pk: &(Vec<Polynomial>, Vec<Polynomial>), q: i128, trapl: &usize, trapw: &usize) -> Vec<Vec<Polynomial>> {
+    // メッセージと公開鍵からハッシュ値を計算して乱数生成器を初期化
+    let mut hasher = Sha256::new();
+    hasher.update(message.as_bytes());
+    for poly in &pk.0 {
+        hasher.update(poly.to_bytes()); // Polynomialのバイト表現
+    }
+    for poly in &pk.1 {
+        hasher.update(poly.to_bytes()); // Polynomialのバイト表現
+    }
+    let result = hasher.finalize();
+    let seed = u64::from_ne_bytes(result[0..8].try_into().unwrap());
+    let mut rng = ChaCha20Rng::seed_from_u64(seed);
 
-    // ahat1_1を最初の列に、ahat1_jをその後ろに追加して1行目を作成
-    let mut first_row = Vec::new();
-    first_row.push(ahat1_1[0][0].clone()); // ahat1_1の最初の要素を追加
-    first_row.append(&mut ahat1_j); // ahat1_jの要素を追加
+    // 可逆な1*1行列を生成
+    let ahat1_1 = generate_invertible_matrix(&mut rng, q);
+    let mut ahat1_j = generate_random_matrix(&mut rng,1, trapl + 2 * trapw - 1, q, 1)[0].clone();
+
+    let mut first_row = vec![ahat1_1[0][0].clone()];
+    first_row.append(&mut ahat1_j);
 
     let list1 = vec![
-        Polynomial::new(vec![0], q.clone()),
-        Polynomial::new(vec![1], q.clone()),
+        Polynomial::new(vec![0], q),
+        Polynomial::new(vec![1], q),
     ];
-    let mut ahat2_j = generate_random_matrix(1, trapl + 2 * trapw - 2, sampler, q, 1)[0].clone();
+    let mut ahat2_j = generate_random_matrix(&mut rng,1, trapl + 2 * trapw - 1, q, 1)[0].clone();
 
-    // list1とahat2_jを結合して2行目を作成
     let mut second_row = list1;
-    second_row.append(&mut ahat2_j); // ahat2_jの要素を追加
+    second_row.append(&mut ahat2_j);
 
-    // 1行目と2行目を結合して最終的な行列ahatを作成
     vec![first_row, second_row]
 }
 
+// Function to calculate commitment
 fn commitck(
     flat_wn: &Vec<Vec<Polynomial>>,
-    sampled_rn: &Vec<Polynomial>,
+    sampled_rn: &Vec<Vec<Polynomial>>,
     ahat: &Vec<Vec<Polynomial>>,
     party_number: usize,
 ) -> (Vec<Vec<Polynomial>>, Vec<Vec<Vec<Polynomial>>>) {
-    let mut comn_per_party = vec![Vec::new(); party_number]; // Vec<Vec<Vec<Polynomial>>>
+    let mut comn_per_party = vec![Vec::new(); party_number]; 
 
-    // `flat_wn` のサブリストごとに `sampled_rn` の対応する要素を使用
-    for (p, temp_wn) in flat_wn.iter().enumerate() {
-        let sampled_poly = &sampled_rn[p]; // `p` は `flat_wn` のサブリストのインデックスに対応
-                                           // println!("sampled_poly: {:?}", sampled_poly);
+    for (p, (temp_wn, sampled_rn_poly)) in flat_wn.iter().zip(sampled_rn.iter()).enumerate() {
 
-        for poly in temp_wn.iter() {
+        for (poly, sampled_poly) in temp_wn.iter().zip(sampled_rn_poly.iter()) {
             let fleft = multiply_ahat_with_sampled_matrix(ahat, &sampled_poly.clone());
             // println!("fleft: {:?}", fleft);
             let fright_poly_matrix = combine_matrices_vertically(
@@ -861,10 +831,9 @@ fn commitck(
             let formatted_fleft = format_openck_fleft(fleft);
             // println!("formatted_fleft: {:?}", formatted_fleft);
             let f = add_formatted_matrices(&formatted_fleft, &fright_poly_matrix);
-            // println!("f: {:?}", f);
 
             let party_index = p % party_number;
-            comn_per_party[party_index].extend(f); // 合計された結果をパーティに格納
+            comn_per_party[party_index].extend(f);
         }
     }
 
@@ -878,28 +847,67 @@ fn multiply_ahat_with_sampled_matrix(
 ) -> Vec<Vec<Polynomial>> {
     let mut result = Vec::new();
     for ahat_row in ahat.iter() {
-        // 各行の計算結果を保持するための新しい多項式を初期化
         let mut sum_poly = Polynomial::new(vec![0], sampled_poly.mod_val.clone());
 
-        // ahat_rowの各多項式とsampled_polyの各係数を乗算して加算する
+        // Multiply each polynomial in ahat_row by each coefficient in sampled_poly and add
         for (ahat_poly, coeff) in ahat_row.iter().zip(sampled_poly.coeffs.iter()) {
             let mut product_poly = ahat_poly.clone();
-            // ahat_polyの各係数にsampled_polyの係数を乗算して新しい多項式を生成
+            // Generate a new polynomial by multiplying each coefficient of ahat_poly by the coefficient of sampled_poly
             for p in product_poly.coeffs.iter_mut() {
                 *p *= coeff;
-                *p %= &sampled_poly.mod_val; // mod_valによる剰余を取る
+                *p %= &sampled_poly.mod_val;
             }
-            // product_poly.normalize();  // 正規化
-            sum_poly = sum_poly.add_ref(&product_poly); // 加算
+            sum_poly = sum_poly.add_ref(&product_poly); 
         }
-        // sum_poly.normalize();  // 最終的な多項式の正規化
-        result.push(vec![sum_poly]); // 各行の計算結果をresultに追加
+        result.push(vec![sum_poly]); 
     }
     result
 }
 
+fn combine_matrices_vertically(
+    matrix_zero: &Vec<Polynomial>,
+    reconted_wj: &Vec<Polynomial>,
+) -> Vec<Vec<Vec<Polynomial>>> {
+    let mut combined_matrix = Vec::new();
+
+    for index in 0..matrix_zero.len() {
+        let mut combined_row = Vec::new();
+        combined_row.push(vec![matrix_zero[index].clone()]);
+        combined_row.push(vec![reconted_wj[index].clone()]);
+        combined_matrix.push(combined_row);
+    }
+
+    combined_matrix
+}
+
+// Change fleft format to avoid extra nesting
+fn format_openck_fleft(openck_fleft: Vec<Vec<Polynomial>>) -> Vec<Vec<Vec<Polynomial>>> {
+    vec![openck_fleft]
+}
+
+// Fix function that adds two multilayer matrices and returns a flat matrix 
+fn add_formatted_matrices(
+    matrix1: &Vec<Vec<Vec<Polynomial>>>,
+    matrix2: &Vec<Vec<Vec<Polynomial>>>,
+) -> Vec<Vec<Polynomial>> {
+    let mut combined_matrix = Vec::new();
+
+    for (rows1, rows2) in matrix1.iter().zip(matrix2.iter()) {
+        for (row1, row2) in rows1.iter().zip(rows2.iter()) {
+            let mut combined_row = Vec::new();
+            for (poly1, poly2) in row1.iter().zip(row2.iter()) {
+                combined_row.push(poly1.add_ref(poly2));
+            }
+            combined_matrix.push(combined_row);
+        }
+    }
+
+    combined_matrix
+}
+
+
 //a. set com
-// comn_per_partyから合計コミットメントを計算する関数
+// Function to calculate total commitment from comn_per_party
 fn setcom(comn_per_party: Vec<Vec<Vec<Polynomial>>>, k: usize) -> Vec<Vec<Vec<Polynomial>>> {
     if comn_per_party.is_empty() {
         return Vec::new();
@@ -912,13 +920,13 @@ fn setcom(comn_per_party: Vec<Vec<Vec<Polynomial>>>, k: usize) -> Vec<Vec<Vec<Po
         0
     };
 
-    // 結果を一次元のリストではなく、二次元のリストに格納するために初期化方法を変更
+    // Changed initialization method to store results in a two-dimensional list instead of a one-dimensional list
     let mut grouped_results = vec![Vec::new(); num_rows / k]; // k個ずつグループ化するための二次元ベクター
 
-    // 一時的な結果を格納するためのフラットなリストを作成
+    // Create a flat list to store temporary results
     let mut temp_results = vec![vec![Polynomial::new(vec![0], Q); num_cols]; num_rows];
 
-    // 入力データの全ての要素を足し合わせる
+    // Adds up all the elements of the input data
     for party_coms in comn_per_party {
         for (i, row_coms) in party_coms.iter().enumerate() {
             for (j, com) in row_coms.iter().enumerate() {
@@ -927,17 +935,17 @@ fn setcom(comn_per_party: Vec<Vec<Vec<Polynomial>>>, k: usize) -> Vec<Vec<Vec<Po
         }
     }
 
-    // 一次元の結果を二次元のグループに分ける
+    // Divide one-dimensional results into two-dimensional groups
     for (i, result) in temp_results.iter().enumerate() {
-        let group_index = i / k; // k要素ごとに同じグループに配置
-        grouped_results[group_index].push(result.clone()); // 各グループに結果を追加
+        let group_index = i / k; 
+        grouped_results[group_index].push(result.clone()); 
     }
 
     grouped_results
 }
 
 //b. derive challenge
-// h0関数の更新版
+// Random oracle h0 function
 fn h0(
     com: &Vec<Vec<Vec<Polynomial>>>,
     message: &str,
@@ -1045,77 +1053,71 @@ fn rejection_sample(
     s: f64,
     m: f64,
 ) -> Result<Vec<Vec<Polynomial>>, &'static str> {
-    let mut rejec_zn_results = Vec::new();
+    let mut rejec_zn_party_result: Vec<Vec<Polynomial>>  = Vec::new();
+    let mut rohs_zns = Vec::new();
+    let mut rohcsn_s_zns = Vec::new();
+    let mut sum_rohs_zn = 0.0;
+    let mut sum_rohcsn_s_zn = 0.0;
 
+    // 値が非常に小さくなってしまうため、先にexp内部の計算を行う
     // 外側のベクトル（パーティごとのリスト）に対してループ
     for (csn_party, zn_party) in csn_list.iter().zip(zn_list.iter()) {
-        let mut rejec_zn_party_result = Vec::new();
 
-        let mut rohs_rms = Vec::new();
-        let mut rohcsn_s_rms = Vec::new();
-        let mut sum_rohs_rm = 0.0;
-        let mut sum_rohcsn_s_rm = 0.0;
-        
-        // 各多項式に対してガウス分布の分母を求める計算を行う
-        for (csn_poly, zn_poly) in csn_party.iter().zip(zn_party.iter()) {
-            let zn_lifted = polynomial_to_f64_vec(zn_poly);
-            // println!("zn_lifted: {:?}", zn_lifted);
-            let csn_lifted = polynomial_to_f64_vec(csn_poly);
+        // 各パーティの全体ベクトルを作成
+        let csn_combined: Vec<f64> = csn_party.iter().flat_map(|poly| polynomial_to_f64_vec(poly)).collect();
+        let zn_combined: Vec<f64> = zn_party.iter().flat_map(|poly| polynomial_to_f64_vec(poly)).collect();
 
-            let (rohs_rm, rohcsn_s_rm) = calculate_sums_for_poly(&csn_lifted, &zn_lifted, s);
-            // println!("rohs_rm: {}", rohs_rm);
-            // println!("rohcsn_s_rm: {}", rohcsn_s_rm);
-            rohs_rms.push(rohs_rm);
-            rohcsn_s_rms.push(rohcsn_s_rm);
+        // 各パーティに対してノルムを計算
+        let (rohs_zn, rohcsn_s_zn) = calculate_sums_for_poly(&csn_combined, &zn_combined, s);
+        // println!("rohs_rm: {}", rohs_rm);
+        // println!("rohcsn_s_rm: {}", rohcsn_s_rm);
+        rohs_zns.push(rohs_zn);
+        rohcsn_s_zns.push(rohcsn_s_zn);
+        sum_rohs_zn += rohs_zn;
+        sum_rohcsn_s_zn += rohcsn_s_zn;
 
-            sum_rohs_rm += rohs_rm;
-            sum_rohcsn_s_rm += rohcsn_s_rm;
-        }
-
-        // 各多項式に対して拒否サンプリングを実行
-        for ((rohs_rm, rohcsn_s_rm), zn_poly) in rohs_rms.iter().zip(rohcsn_s_rms.iter()).zip(zn_party.iter()) {
-            // println!("rohs_rm: {}", rohs_rm);
-            // println!("sum_rohs_rm: {}", sum_rohs_rm);
-            // println!("rohcsn_s_rm: {}", rohcsn_s_rm);
-            // println!("sum_rohcsn_s_rm: {}", sum_rohcsn_s_rm);
-            // println!("{}", rohs_rm / sum_rohs_rm);
-            // println!("{}", m * (rohcsn_s_rm / sum_rohcsn_s_rm));
-            let ratio = (rohs_rm / sum_rohs_rm) / (m* (rohcsn_s_rm / sum_rohcsn_s_rm));
-            println!("Ratio: {}", ratio);
-
-            // 比率と1の小さい方を選ぶ
-            let acceptance_probability = ratio.min(1.0);
-            let random_probability: f64 = rand::random();
-
-            // ランダムな確率を使用してサンプルを受け入れるか拒否するかを決定
-            if random_probability <= acceptance_probability {
-                rejec_zn_party_result.push(zn_poly.clone());
-            } else {
-                // 拒否された場合は再サンプリングが必要
-                return Err("restart");
-            }
-        }
-
-        rejec_zn_results.push(rejec_zn_party_result);
     }
-    // println!("rejec_zn_results: {:?}", rejec_zn_results);
 
-    Ok(rejec_zn_results)
+    for ((rohs_zn, rohcsn_s_zn), zn_list) in rohs_zns.iter().zip(rohcsn_s_zns.iter()).zip(zn_list.iter()) {
+        // 各パーティに対して拒否サンプリングを実行
+        let ratio = ((rohs_zn / sum_rohs_zn).exp()) / (m * ((rohcsn_s_zn / sum_rohcsn_s_zn).exp()));
+        println!("Ratio: {}", ratio);
+
+        // 比率と1の小さい方を選ぶ
+        let acceptance_probability = ratio.min(1.0);
+        let random_probability: f64 = rand::random();
+
+        // ランダムな確率を使用してサンプルを受け入れるか拒否するかを決定
+        if random_probability <= acceptance_probability {
+            rejec_zn_party_result.push(zn_list.clone());
+        } else {
+            // 拒否された場合は再サンプリングが必要
+            return Err("restart");
+        }
+    }
+    Ok(rejec_zn_party_result)
 }
 
-// 単一の多項式のための比率計算関数
+// 単一の多項式のための比率計算関数を任意精度で計算
 fn calculate_sums_for_poly(csn: &Vec<f64>, zn: &Vec<f64>, s: f64) -> (f64, f64) {
-    let zn_norm = calculate_norm(zn);
+    let precision = 50; // 50ビットの精度
+    let pi = Float::with_val(precision, std::f64::consts::PI);
+    let s = Float::with_val(precision, s);
+
+    let zn_norm = Float::with_val(precision, calculate_norm(zn));
     let csn_minus_zn = sub_ref_f64(zn, csn);
-    let csn_norm = calculate_norm(&csn_minus_zn);
-    println!("zn_norm: {}", zn_norm);
-    // println!("csn_norm: {}", csn_norm);
-    println!("s: {}", s);
+    let csn_norm = Float::with_val(precision, calculate_norm(&csn_minus_zn));
 
-    let rohs_rm = ((-PI * zn_norm.powi(2)) / (s.powi(2))).exp();
-    let rohcsn_s_rm = ((-PI * csn_norm.powi(2)) / (s.powi(2))).exp();
+    let zn_norm_squared: Float = zn_norm.clone().pow(2); // 明示的な型注釈
+    let sigma_translate: Float = s * (Float::with_val(precision, 2.0) * pi).sqrt();
+    let s_squared: Float = sigma_translate.clone().pow(2); // 明示的な型注釈
+    let csn_norm_squared: Float = csn_norm.pow(2); // 明示的な型注釈
 
-    (rohs_rm, rohcsn_s_rm)
+    let rohs_zn = -(zn_norm_squared / (Float::with_val(precision, 2.0) * s_squared.clone()));
+    let rohcsn_s_zn = -(csn_norm_squared / (Float::with_val(precision, 2.0)* s_squared.clone()));
+
+    // Floatからf64への変換
+    (rohs_zn.to_f64(), rohcsn_s_zn.to_f64())
 }
 
 // 多項式をf64のベクトルに変換する関数
@@ -1157,7 +1159,6 @@ fn sub_ref_f64(a: &Vec<f64>, b: &Vec<f64>) -> Vec<f64> {
 }
 
 fn validate_zn(zn_result: &Vec<Vec<Polynomial>>, large_b: f64) -> String {
-    //println!("zn_result: {:?}", zn_result);
     for zn_party in zn_result {
         // 各パーティの多項式ベクトルを一つの大きなベクトルに結合
         let combined_coeffs: Vec<f64> = zn_party
@@ -1167,8 +1168,8 @@ fn validate_zn(zn_result: &Vec<Vec<Polynomial>>, large_b: f64) -> String {
 
         // 結合されたベクトルのノルムを計算
         let zn_norm = calculate_norm(&combined_coeffs);
-        println!("Combined zn_norm: {}", zn_norm);
-        println!("large_b: {}", large_b);
+        // println!("Combined zn_norm: {}", zn_norm);
+        // println!("large_b: {}", large_b);
 
         // ノルムがlarge_bより大きい場合は処理を中断
         if zn_norm > large_b {
@@ -1196,14 +1197,11 @@ fn recon_wj(
                 .iter()
                 .map(|tn_poly| {
                     let mut product = challenge.clone().mul_ntt(&tn_poly.clone());
-                    // product.normalize();
                     product
                 })
                 .collect()
         })
         .collect();
-    // let recon_wn_rights: Vec<Vec<Polynomial>> = multiply_polynomial_matrix_vector(a_bar, csn, q);
-    // println!("recon_wn_rights: {:?}", recon_wn_rights);
 
     //a_barとznの乗算を行い，その結果を保存
     let addition_result = multiply_polynomial_matrix_vector(a_bar, zn, q);
@@ -1215,7 +1213,6 @@ fn recon_wj(
             .zip(recon_wn_right_row)
             .map(|(addition_poly, recon_wn_right_poly)| {
                 let mut result = addition_poly.clone().sub(recon_wn_right_poly.clone());
-                // result.normalize();
                 result
             })
             .collect();
@@ -1226,7 +1223,7 @@ fn recon_wj(
 }
 
 fn validate_openck(
-    sampled_rn: &Vec<Polynomial>,
+    sampled_rn: &Vec<Vec<Polynomial>>,
     reconted_wj: &Vec<Vec<Polynomial>>,
     comn_per_party: &Vec<Vec<Vec<Polynomial>>>,
     large_b: f64,
@@ -1235,10 +1232,9 @@ fn validate_openck(
 ) -> String {
     let mut poly_index = 0; // 全体のポリノミアルインデックスを追跡する変数
 
-    for (j, temp_reconted_wj) in reconted_wj.iter().enumerate() {
-        let sampled_poly = &sampled_rn[j]; // サブリストに対応する sampled_rn の要素を取得
+    for (j, (temp_reconted_wj, temp_sampled_rn)) in reconted_wj.iter().zip(sampled_rn.iter()).enumerate() {
 
-        for _poly in temp_reconted_wj.iter() {
+        for (_poly, sampled_poly) in temp_reconted_wj.iter().zip(temp_sampled_rn.iter()) {
             let openck_fleft = multiply_ahat_with_sampled_matrix(ahat, &sampled_poly.clone());
             // println!("openck_fleft: {:?}", openck_fleft);
             let openck_zero_x = combine_matrices_vertically(
@@ -1267,47 +1263,6 @@ fn validate_openck(
     "continue".to_string()
 }
 
-fn combine_matrices_vertically(
-    matrix_zero: &Vec<Polynomial>,
-    reconted_wj: &Vec<Polynomial>,
-) -> Vec<Vec<Vec<Polynomial>>> {
-    let mut combined_matrix = Vec::new();
-
-    for index in 0..matrix_zero.len() {
-        let mut combined_row = Vec::new();
-        combined_row.push(vec![matrix_zero[index].clone()]);
-        combined_row.push(vec![reconted_wj[index].clone()]);
-        combined_matrix.push(combined_row);
-    }
-
-    combined_matrix
-}
-
-// fleftのフォーマットを変更して、余分なネストを避ける
-fn format_openck_fleft(openck_fleft: Vec<Vec<Polynomial>>) -> Vec<Vec<Vec<Polynomial>>> {
-    vec![openck_fleft] // これにより、Vec<Vec<Polynomial>> を Vec<Vec<Vec<Polynomial>>> に変換
-}
-
-// 二つの多層行列を加算し、フラットな行列（Vec<Vec<Polynomial>>）を返す関数の修正
-fn add_formatted_matrices(
-    matrix1: &Vec<Vec<Vec<Polynomial>>>,
-    matrix2: &Vec<Vec<Vec<Polynomial>>>,
-) -> Vec<Vec<Polynomial>> {
-    let mut combined_matrix = Vec::new();
-
-    for (rows1, rows2) in matrix1.iter().zip(matrix2.iter()) {
-        for (row1, row2) in rows1.iter().zip(rows2.iter()) {
-            let mut combined_row = Vec::new();
-            for (poly1, poly2) in row1.iter().zip(row2.iter()) {
-                combined_row.push(poly1.add_ref(poly2));
-            }
-            combined_matrix.push(combined_row);
-        }
-    }
-
-    combined_matrix
-}
-
 // Vec<Polynomial>形式のデータに対して各多項式のノルムを計算する関数
 fn calculate_norms_for_polynomial_vector(polynomials: &Vec<Polynomial>) -> Vec<f64> {
     polynomials
@@ -1334,43 +1289,31 @@ fn calculate_norms_for_polynomial_vector(polynomials: &Vec<Polynomial>) -> Vec<f
 
 fn compute_signature(
     rejec_zn_result: &Vec<Vec<Polynomial>>,
-    sampled_rn: &Vec<Polynomial>,
+    sampled_rn: &Vec<Vec<Polynomial>>,
 ) -> (Vec<Polynomial>, Vec<Polynomial>) {
     let sign_zn = sum_polynomials_by_index(rejec_zn_result);
-    let sign_rn = sum_polynomials(sampled_rn); // 修正: 単一の多項式のリストを合計する
+    let sign_rn = sum_polynomials_by_index(sampled_rn); 
 
-    (sign_zn, vec![sign_rn]) // 修正: 結果をベクトル形式で返す
+    (sign_zn, sign_rn) // 修正: 結果をベクトル形式で返す
 }
 
 // 各インデックスの多項式を加算する関数
-fn sum_polynomials_by_index(sampled_rn: &Vec<Vec<Polynomial>>) -> Vec<Polynomial> {
-    if sampled_rn.is_empty() {
+fn sum_polynomials_by_index(sampled_vector: &Vec<Vec<Polynomial>>) -> Vec<Polynomial> {
+    if sampled_vector.is_empty() {
         return Vec::new();
     }
 
-    let num_polynomials = sampled_rn[0].len(); // 各パーティーが持つ多項式の数
+    let num_polynomials = sampled_vector[0].len(); // Number of polynomials each party has
     let mut sum_polynomials =
-        vec![Polynomial::new(vec![], sampled_rn[0][0].mod_val.clone()); num_polynomials];
+        vec![Polynomial::new(vec![], sampled_vector[0][0].mod_val.clone()); num_polynomials];
 
-    for party_polynomials in sampled_rn {
+    for party_polynomials in sampled_vector {
         for (index, poly) in party_polynomials.iter().enumerate() {
             sum_polynomials[index] = sum_polynomials[index].add_ref(poly);
         }
     }
 
     sum_polynomials
-}
-
-fn sum_polynomials(sampled_rn: &Vec<Polynomial>) -> Polynomial {
-    // 初期多項式を設定（mod_valを適切に設定するため、sampled_rnの最初の要素から借用）
-    let mut total_sum = Polynomial::new(vec![0], sampled_rn[0].mod_val.clone());
-
-    // 全ての多項式を合計する
-    for poly in sampled_rn.iter() {
-        total_sum = total_sum.add_ref(poly); // 多項式を足し合わせる
-    }
-
-    total_sum
 }
 
 fn ready_verification(
@@ -1382,13 +1325,14 @@ fn ready_verification(
     sign_zn: &Vec<Polynomial>,
     com: &Vec<Vec<Vec<Polynomial>>>,
     message: &str,
-    ck_limit: &i32,
+    trapl: &usize,
+    trapw: &usize,
     t_sum: &Vec<Polynomial>,
 ) -> Vec<Polynomial> {
 
 
-    // commitment_keyの計算
-    let ready_ck = h3(message, &pk, ck_limit);
+    // H3関数として、cgenを使用してcommitment_keyの計算
+    let ready_ck = c_gen(message, &pk, Q, trapl, trapw);
     // println!("ready_ck: {:?}", ready_ck);
 
 
@@ -1404,7 +1348,6 @@ fn ready_verification(
         .iter()
         .map(|tsum_poly| {
             let mut product = challenge.clone().mul_ntt(tsum_poly);
-            // product.normalize();
             product
         })
         .collect();
@@ -1443,7 +1386,7 @@ fn eachparty_openck(
     ver_w: &Vec<Polynomial>,
     com: &Vec<Vec<Vec<Polynomial>>>,
     ahat: &Vec<Vec<Polynomial>>, // Ahatを加える
-    b: f64,
+    bn: f64,
     k: usize,
 ) -> Result<(), String> {
     let sign_rn_norms = calculate_norms_for_polynomial_vector(sign_rn);
@@ -1454,7 +1397,7 @@ fn eachparty_openck(
         // println!("each_openck_fleft: {:?}", each_openck_fleft);
 
         let temp_ver_w = &ver_w[j]; // 直接参照を使用
-        // println!("temp_ver_w: {:?}", temp_ver_w);
+                                    // println!("temp_ver_w: {:?}", temp_ver_w);
 
         let cols = 1;
         let temp_matrix_zero = vec![Polynomial::new(vec![0], ahat[0][0].mod_val.clone()); cols]; // 0多項式のベクトルを作成
@@ -1471,11 +1414,11 @@ fn eachparty_openck(
         // println!("com: {:?}", com);
         // println!("each_openck_result_flat: {:?}", each_openck_result_flat);
 
-        println!("b: {}", b);
-        println!("sign_rn_norms: {:?}", sign_rn_norms[0]);
+        // println!("bn: {}", bn);
+        // println!("sign_rn_norms: {:?}", sign_rn_norms[0]);
 
         // com[j] と each_openck_result を比較
-        if sign_rn_norms[0] <= b && com[j] == each_openck_result {
+        if sign_rn_norms[0] <= bn && com[j] == each_openck_result {
             continue;
         } else {
             println!("eachparty_openck is aborted");
@@ -1490,8 +1433,6 @@ fn add_polynomial_matrices(
     matrix1: &Vec<Vec<Polynomial>>,
     matrix2: &Vec<Vec<Polynomial>>,
 ) -> Vec<Vec<Polynomial>> {
-    // ここにmatrix1とmatrix2を加算するロジックを実装
-    // この例では、単純な要素ごとの加算を行いますが、実際にはサイズのチェックなどが必要になる場合があります
     matrix1
         .iter()
         .zip(matrix2.iter())
@@ -1504,36 +1445,6 @@ fn add_polynomial_matrices(
                 .collect()
         })
         .collect()
-}
-
-fn eachparty_verification(
-    sign_zn: &Vec<Polynomial>,
-    com: &Vec<Vec<Vec<Polynomial>>>,
-    sign_rn: &Vec<Polynomial>,
-    ver_w: &Vec<Polynomial>,
-    ahat: &Vec<Vec<Polynomial>>,
-    b: f64,
-    party_number: usize,
-) {
-    // sign_znの全要素で最大のノルムを計算
-    let zn_norm = calculate_norms_for_polynomial_vector(sign_zn);
-    println!("Norm of sign_zn: {}", zn_norm[0]);
-    let bn = (party_number as f64).sqrt() * b;
-    println!("Threshold bn for party {}", bn);
-
-    let mut verification_failed = false;
-
-    for i in 0..party_number {
-        if zn_norm[0] > bn || eachparty_openck(sign_rn, ver_w, com, ahat, b, K).is_err() {
-            println!("Verification is invalid for party {}", i);
-            verification_failed = true;
-            break;
-        }
-    }
-
-    if !verification_failed {
-        println!("All verifications are valid.");
-    }
 }
 
 fn ver_combine_matrices_vertically(
@@ -1551,4 +1462,34 @@ fn ver_combine_matrices_vertically(
     combined_matrix.push(vec![reconted_wj.clone()]);
 
     combined_matrix
+}
+
+fn eachparty_verification(
+    sign_zn: &Vec<Polynomial>,
+    com: &Vec<Vec<Vec<Polynomial>>>,
+    sign_rn: &Vec<Polynomial>,
+    ver_w: &Vec<Polynomial>,
+    ahat: &Vec<Vec<Polynomial>>,
+    b: f64,
+    party_number: usize,
+) {
+    // sign_znの全要素で最大のノルムを計算
+    let zn_norm = calculate_norms_for_polynomial_vector(sign_zn);
+    // println!("Norm of sign_zn: {}", zn_norm[0]);
+    let bn = (party_number as f64).sqrt() * b;
+    // println!("Threshold bn for party {}", bn);
+
+    let mut verification_failed = false;
+
+    for i in 0..party_number {
+        if zn_norm[0] > bn || eachparty_openck(sign_rn, ver_w, com, ahat, bn, K).is_err() {
+            println!("Verification is invalid for party {}", i);
+            verification_failed = true;
+            break;
+        }
+    }
+
+    if !verification_failed {
+        println!("All verifications are valid.");
+    }
 }
