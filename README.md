@@ -1,6 +1,6 @@
-The functions used in each process (gen, sign, verify) in the DS2 protocol are described in `src/bin/gen.rs`, `sign.rs`, `verify.rs`.
+The functions used in each process (gen, sign, verify) in the DS2 protocol are described in `src/bin/gen.rs`, `src/bin/sign.rs`, `src/bin/verify.rs`.
 
-To actually run the entire protocol, run `src/bin/ds2.rs` with the following command:
+To actually run the entire protocol, you can run `src/bin/ds2.rs` with the following command:
 
 ```bash
 cargo run --bin ds2
