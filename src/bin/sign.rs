@@ -60,18 +60,18 @@ fn main() {
     // Protocol DS2.Sign_n(sid, sk_n, pk, myu)
     loop {
         sample_yn = sampleyn(L, K, &sampler, Q, party_number);
-        wn = computewn(&a_bar, &sample_yn, &Q);
+        // wn = computewn(&a_bar, &sample_yn, &Q);
         sampled_rn = samplern(party_number, trapl, trapw, &sampler, Q);
 
         // Generate commitment key (ck=ahat) using cgen as H3 function
-        ahat = c_gen(message, &pk, Q, &trapl, &trapw);
+        // ahat = c_gen(message, &pk, Q, &trapl, &trapw);
 
-        let result = commitck(&wn, &sampled_rn, &ahat, party_number);
-        let (zero, comn) = result;
-        comn_per_party = comn;
+        // let result = commitck(&wn, &sampled_rn, &ahat, party_number);
+        // let (zero, comn) = result;
+        // comn_per_party = comn;
 
-        com = setcom(comn_per_party.clone(), K);
-        let derived_challenge = h0(&com, message, &pk_copy, N, &kappa_usize, &Q);
+        // com = setcom(comn_per_party.clone(), K);
+        // let derived_challenge = h0(&com, message, &pk_copy, N, &kappa_usize, &Q);
         (computed_zn, csn) = compute_zn_ntt(&derived_challenge, &sn, &sample_yn);
 
         match rejection_sample(&csn, &computed_zn, s, m_f64) {
@@ -91,19 +91,19 @@ fn main() {
     if let (Some(rejec_zn_result), Some(derived_challenge)) =
         (&last_rejec_zn_result, &last_derived_challenge)
     {
-        let reconted_wj = recon_wj(&a_bar, derived_challenge, &tn, &Q, &rejec_zn_result);
+        // let reconted_wj = recon_wj(&a_bar, derived_challenge, &tn, &Q, &rejec_zn_result);
         if validate_zn(&rejec_zn_result, large_b) == "abort" {
             println!("protocol aborted by zn_value check.");
-        } else if validate_openck(
-            &sampled_rn,
-            &reconted_wj,
-            &comn_per_party.clone(),
-            large_b,
-            &ahat,
-            K,
-        ) == "abort"
-        {
-            println!("protocol aborted by openck check.");
+        // } else if validate_openck(
+        //     &sampled_rn,
+        //     &reconted_wj,
+        //     &comn_per_party.clone(),
+        //     large_b,
+        //     &ahat,
+        //     K,
+        // ) == "abort"
+        // {
+        //     println!("protocol aborted by openck check.");
         } else {
             println!("Let's go!");
             let (sign_zn, sign_rn) = compute_signature(&rejec_zn_result, &sampled_rn);
