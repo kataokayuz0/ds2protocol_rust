@@ -141,16 +141,18 @@ fn main() {
     // println!("large_t: {}", large_t);
     let sigma = &alpha * &large_t;
     // println!("sigma: {}", sigma);
-    let sampler = GaussianSampler::new(sigma);
     let large_b = gamma * sigma * (n * (l + k)).sqrt();
 
     let m_f64 = ((t / alpha) + (1.0 / (2.0 * alpha.powi(2)))).exp();
     // println!("M: {}", m_f64);
     let mn = m_f64.powf(f64_party_number);
     println!("M^n: {}", mn);
-    let trapl = Q.to_f64().unwrap().log(50.0).ceil() as usize;
-    let trapw = Q.to_f64().unwrap().log(50.0).ceil() as usize;
-    let s = &alpha * &large_t * (2.0 * std::f64::consts::PI).sqrt();
+    let trapl = Q.to_f64().unwrap().log(20.0).ceil() as usize;
+    let trapw = Q.to_f64().unwrap().log(20.0).ceil() as usize;
+    // 標準偏差の形式をサンプラーに合わせる
+    // let s = &alpha * &large_t * (2.0 * std::f64::consts::PI).sqrt();
+    let s = sigma.clone();
+    let sampler = GaussianSampler::new(s);
 
     // println!("trapl: {}, trapw: {}, s: {}", trapl, trapw, s);
 
@@ -196,6 +198,8 @@ fn main() {
         // println!("result: {:?}", result);
         let (zero, comn) = result;
         comn_per_party = comn;
+        let size_of_comn = bit_size_of_polynomials_vec_vec_vec(&comn_per_party);
+        println!("Size of comn: {}", &size_of_comn);
         // let rows = comn_per_party.len();
         // let cols = comn_per_party[0].len();
         // println!("com_per_party: {:?}", comn_per_party);
@@ -203,8 +207,8 @@ fn main() {
 
         com = setcom(comn_per_party.clone(), K);
         // println!("Commitment com: {:?}", com);
-        let size_of_com = bit_size_of_polynomials_vec_vec_vec(&com);
-        println!("Size of com: {}", &size_of_com);
+        let size_of_com_vec = bit_size_of_polynomials_vec_vec_vec(&com);
+        println!("Size of com_vec: {}", &size_of_com_vec);
 
         let derived_challenge = h0(&com, message, &pk_copy, N, &kappa_usize, &Q);
         // println!("Derived challenge: {:?}", derived_challenge);
@@ -252,11 +256,15 @@ fn main() {
             println!("protocol aborted by openck check.");
         } else {
             println!("Let's go!");
-            let (sign_zn, sign_rn) = compute_signature(&rejec_zn_result, &sampled_rn);
-            let size_of_zn = bit_size_of_polynomials_vec(&sign_zn);
+            let size_of_zn = bit_size_of_polynomials_vec_vec(&rejec_zn_result);
             println!("Size of zn: {}", &size_of_zn);
-            let size_of_rn = bit_size_of_polynomials_vec(&sign_rn);
+            let size_of_rn = bit_size_of_polynomials_vec_vec(&sampled_rn);
             println!("Size of rn: {}", &size_of_rn);
+            let (sign_zn, sign_rn) = compute_signature(&rejec_zn_result, &sampled_rn);
+            let size_of_z_vec = bit_size_of_polynomials_vec(&sign_zn);
+            println!("Size of z_vec: {}", &size_of_z_vec);
+            let size_of_r_vec = bit_size_of_polynomials_vec(&sign_rn);
+            println!("Size of r_vec: {}", &size_of_r_vec);
             // println!("sign_rn: {:?}", sign_rn);
             let ver_w = ready_verification(
                 &a_bar,
@@ -318,18 +326,28 @@ impl Polynomial {
     pub fn bit_size(&self) -> usize {
         let mut total_bits = 0;
         for &coeff in &self.coeffs {
-            total_bits += Self::bit_size_of_coeff(coeff);
+            // selfを引数として渡す
+            total_bits += self.bit_size_of_coeff(coeff);
         }
         total_bits
     }
 
     // 各係数の情報量（ビット数）を計算するヘルパーメソッド
-    fn bit_size_of_coeff(coeff: i128) -> usize {
-        if coeff == 0 {
+    fn bit_size_of_coeff(&self, coeff: i128) -> usize {
+        let half_mod = self.mod_val / 2;
+
+        // 係数がmod_val / 2を超える場合、本来は負の値として扱う
+        let adjusted_coeff = if coeff > half_mod {
+            coeff - self.mod_val
+        } else {
+            coeff
+        };
+
+        if adjusted_coeff == 0 {
             1 // 0は1ビットで表現できる
         } else {
             // 係数の絶対値の対数を取り、それに基づいてビット数を計算
-            let bits = (coeff.abs() as f64).log2().ceil() as usize; // 対数を取り、切り上げる
+            let bits = (adjusted_coeff.abs() as f64).log2().ceil() as usize; // 対数を取り、切り上げる
             bits
         }
     }
@@ -543,14 +561,15 @@ fn generate_fromuniform_random_matrix(k: usize, l: usize, q: i128, party_number:
     matrices
 }
 
-// ガウスサンプルに基づいて多項式を生成する関数(ahat行列内多項式)
-fn gaussian_sample_polynomial<R: Rng>(
+// 一様ランダムに多項式を生成する関数(ahat行列内多項式)
+fn sample_polynomial_for_ahat<R: Rng>(
     rng: &mut R,
     q: i128,
 ) -> Polynomial {
+    let range = Uniform::new(-(q / 2), q / 2 + 1);
     let coeffs: Vec<i128> = (0..N)
         .map(|_| {
-            let sample: i128 = rng.gen_range(-(q as i128 / 2)..=(q as i128 / 2));
+            let sample = range.sample(rng);
             (sample + q) % q // qで剰余を取る
         })
         .collect();
@@ -586,7 +605,7 @@ fn generate_random_matrix<R: Rng>(
     let mut matrices: Vec<Vec<Polynomial>> = Vec::with_capacity(party_number);
     for _ in 0..party_number {
         let matrix: Vec<Polynomial> = (0..k * l)
-            .map(|_| gaussian_sample_polynomial(rng, q))
+            .map(|_| sample_polynomial_for_ahat(rng, q))
             .collect();
         matrices.push(matrix);
     }
@@ -599,7 +618,7 @@ fn generate_invertible_matrix<R: Rng>(
     q: i128,
 ) -> Vec<Vec<Polynomial>> {
     loop {
-        let ahat1_1: Vec<Vec<Polynomial>> = vec![vec![gaussian_sample_polynomial(rng, q)]];
+        let ahat1_1: Vec<Vec<Polynomial>> = vec![vec![sample_polynomial_for_ahat(rng, q)]];
         // For 1*1 matrices, we assume here that the polynomial is "invertible" by checking that it is non-zero
         if !ahat1_1[0][0].coeffs[0].is_zero() {
             return ahat1_1;
@@ -800,7 +819,7 @@ fn c_gen(message: &str, pk: &(Vec<Polynomial>, Vec<Polynomial>), q: i128, trapl:
         Polynomial::new(vec![0], q),
         Polynomial::new(vec![1], q),
     ];
-    let mut ahat2_j = generate_random_matrix(&mut rng,1, trapl + 2 * trapw - 1, q, 1)[0].clone();
+    let mut ahat2_j = generate_random_matrix(&mut rng,1, trapl + 2 * trapw - 2, q, 1)[0].clone();
 
     let mut second_row = list1;
     second_row.append(&mut ahat2_j);
@@ -1081,7 +1100,7 @@ fn rejection_sample(
     for ((rohs_zn, rohcsn_s_zn), zn_list) in rohs_zns.iter().zip(rohcsn_s_zns.iter()).zip(zn_list.iter()) {
         // 各パーティに対して拒否サンプリングを実行
         let ratio = ((rohs_zn / sum_rohs_zn).exp()) / (m * ((rohcsn_s_zn / sum_rohcsn_s_zn).exp()));
-        println!("Ratio: {}", ratio);
+        // println!("Ratio: {}", ratio);
 
         // 比率と1の小さい方を選ぶ
         let acceptance_probability = ratio.min(1.0);
@@ -1109,8 +1128,7 @@ fn calculate_sums_for_poly(csn: &Vec<f64>, zn: &Vec<f64>, s: f64) -> (f64, f64) 
     let csn_norm = Float::with_val(precision, calculate_norm(&csn_minus_zn));
 
     let zn_norm_squared: Float = zn_norm.clone().pow(2); // 明示的な型注釈
-    let sigma_translate: Float = s * (Float::with_val(precision, 2.0) * pi).sqrt();
-    let s_squared: Float = sigma_translate.clone().pow(2); // 明示的な型注釈
+    let s_squared: Float = s.clone().pow(2); // 明示的な型注釈
     let csn_norm_squared: Float = csn_norm.pow(2); // 明示的な型注釈
 
     let rohs_zn = -(zn_norm_squared / (Float::with_val(precision, 2.0) * s_squared.clone()));

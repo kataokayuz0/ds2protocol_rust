@@ -1,3 +1,13 @@
+use num_traits::ToPrimitive;
+use rand::rngs::ThreadRng;
+use rand::thread_rng;
+use rand::Rng;
+use rand_distr::{Distribution, Normal, Uniform};
+use sha2::{Digest, Sha256};
+use std::sync::{Arc, Mutex};
+use rug::{Assign, Float};
+use rug::ops::{Pow};
+
 const K: usize = 2;
 const L: usize = 2;
 const Q: i128 = 862214684689;
@@ -24,26 +34,28 @@ fn main() {
 
     let large_t = kappa * eta_f64 * (n * (l + k)).sqrt();
     let sigma = &alpha * &large_t;
-    let sampler = GaussianSampler::new(sigma);
     let large_b = gamma * sigma * (n * (l + k)).sqrt();
 
     let m_f64 = ((t / alpha) + (1.0 / (2.0 * alpha.powi(2)))).exp();
     let mn = m_f64.powf(f64_party_number); // The expected number of restarts until all n parties proceed simultaneously
 
-    let trapl = trapq.to_f64().unwrap().log2().ceil() as usize;
-    let trapw = trapq.to_f64().unwrap().log2().ceil() as usize;
-    let s = &alpha * &large_t * (2.0 * std::f64::consts::PI).sqrt();
+    let trapl = Q.to_f64().unwrap().log(20.0).ceil() as usize;
+    let trapw = Q.to_f64().unwrap().log(20.0).ceil() as usize;
+    // Match the standard deviation format to the sampler
+    let s = sigma.clone();
+    // let s = &alpha * &large_t * (2.0 * std::f64::consts::PI).sqrt();
+    let sampler = GaussianSampler::new(sigma);
 
-    let mut last_rejec_zn_result: Option<Vec<Vec<Polynomial>>> = None;
-    let mut last_derived_challenge: Option<Polynomial> = None;
-    let mut sampled_rn: Vec<Vec<Polynomial>> = Vec::new();
-    let mut comn_per_party: Vec<Vec<Polynomial>> = Vec::new();
-    let mut ahat: Vec<Vec<Polynomial>> = Vec::new();
-    let mut wn: Vec<Vec<Polynomial>> = Vec::new();
-    let mut com: Vec<Polynomial> = Vec::new();
-    let mut computed_zn: Vec<Vec<Polynomial>> = Vec::new();
-    let mut csn: Vec<Vec<Polynomial>> = Vec::new();
-    let mut sample_yn: Vec<Vec<Polynomial>> = Vec::new();
+    // let mut last_rejec_zn_result: Option<Vec<Vec<Polynomial>>> = None;
+    // let mut last_derived_challenge: Option<Polynomial> = None;
+    // let mut sampled_rn: Vec<Vec<Polynomial>> = Vec::new();
+    // let mut comn_per_party: Vec<Vec<Polynomial>> = Vec::new();
+    // let mut ahat: Vec<Vec<Polynomial>> = Vec::new();
+    // let mut wn: Vec<Vec<Polynomial>> = Vec::new();
+    // let mut com: Vec<Polynomial> = Vec::new();
+    // let mut computed_zn: Vec<Vec<Polynomial>> = Vec::new();
+    // let mut csn: Vec<Vec<Polynomial>> = Vec::new();
+    // let mut sample_yn: Vec<Vec<Polynomial>> = Vec::new();
 
     // Protocol DS2.Sign_n(sid, sk_n, pk, myu)
     loop {
@@ -120,20 +132,21 @@ impl GaussianSampler {
     }
 }
 
-// Function to generate polynomials based on Gaussian samples (polynomials in ahat matrix)
-fn gaussian_sample_polynomial<R: Rng>(
-    rng: &mut R,
-    q: i128,
-) -> Polynomial {
-    let coeffs: Vec<i128> = (0..N)
-        .map(|_| {
-            let sample: i128 = rng.gen_range(-(q as i128 / 2)..=(q as i128 / 2));
-            (sample + q) % q // qで剰余を取る
-        })
-        .collect();
+// // Function to generate polynomials based on Gaussian samples (polynomials in ahat matrix)
+// fn sample_polynomial_for_ahat<R: Rng>(
+//     rng: &mut R,
+//     q: i128,
+// ) -> Polynomial {
+//     let range = Uniform::new(-(q / 2), q / 2 + 1);
+//     let coeffs: Vec<i128> = (0..N)
+//         .map(|_| {
+//             let sample = range.sample(rng);
+//             (sample + q) % q // qで剰余を取る
+//         })
+//         .collect();
 
-    Polynomial::new(coeffs, q)
-}
+//     Polynomial::new(coeffs, q)
+// }
 
 // Function to generate polynomials based on Gaussian samples (polynomials in yn, rn)
 fn gaussian_sample_polynomial_for_yn_rn(sampler: &GaussianSampler, q: i128) -> Polynomial {
@@ -152,37 +165,37 @@ fn gaussian_sample_polynomial_for_yn_rn(sampler: &GaussianSampler, q: i128) -> P
     Polynomial::new(coeffs, q)
 }
 
-// Function to generate kxl random polynomial matrices and store them in a list with the number of party_numbers
-fn generate_random_matrix<R: Rng>(
-    rng: &mut R,
-    k: usize,
-    l: usize,
-    q: i128,
-    party_number: usize,
-) -> Vec<Vec<Polynomial>> {
-    let mut matrices: Vec<Vec<Polynomial>> = Vec::with_capacity(party_number);
-    for _ in 0..party_number {
-        let matrix: Vec<Polynomial> = (0..k * l)
-            .map(|_| gaussian_sample_polynomial(rng, q))
-            .collect();
-        matrices.push(matrix);
-    }
-    matrices
-}
+// // Function to generate kxl random polynomial matrices and store them in a list with the number of party_numbers
+// fn generate_random_matrix<R: Rng>(
+//     rng: &mut R,
+//     k: usize,
+//     l: usize,
+//     q: i128,
+//     party_number: usize,
+// ) -> Vec<Vec<Polynomial>> {
+//     let mut matrices: Vec<Vec<Polynomial>> = Vec::with_capacity(party_number);
+//     for _ in 0..party_number {
+//         let matrix: Vec<Polynomial> = (0..k * l)
+//             .map(|_| sample_polynomial_for_ahat(rng, q))
+//             .collect();
+//         matrices.push(matrix);
+//     }
+//     matrices
+// }
 
-// Function to return an invertible 1*1 matrix
-fn generate_invertible_matrix<R: Rng>(
-    rng: &mut R,
-    q: i128,
-) -> Vec<Vec<Polynomial>> {
-    loop {
-        let ahat1_1: Vec<Vec<Polynomial>> = vec![vec![gaussian_sample_polynomial(rng, q)]];
-        // For 1*1 matrices, we assume here that the polynomial is "invertible" by checking that it is non-zero
-        if !ahat1_1[0][0].coeffs[0].is_zero() {
-            return ahat1_1;
-        }
-    }
-}
+// // Function to return an invertible 1*1 matrix
+// fn generate_invertible_matrix<R: Rng>(
+//     rng: &mut R,
+//     q: i128,
+// ) -> Vec<Vec<Polynomial>> {
+//     loop {
+//         let ahat1_1: Vec<Vec<Polynomial>> = vec![vec![sample_polynomial_for_ahat(rng, q)]];
+//         // For 1*1 matrices, we assume here that the polynomial is "invertible" by checking that it is non-zero
+//         if !ahat1_1[0][0].coeffs[0].is_zero() {
+//             return ahat1_1;
+//         }
+//     }
+// }
 
 // Multiply a polynomial matrix by a vector of polynomials
 fn multiply_polynomial_matrix_vector(
@@ -214,96 +227,21 @@ fn multiply_polynomial_matrix_vector(
     result
 }
 
-// Generate a polynomial with random coefficients in the range of eta
-fn sample_from_s_eta(eta: i128, size: usize, n: usize, mod_val: i128) -> Vec<Polynomial> {
-    let mut rng = thread_rng();
-    let range = Uniform::new_inclusive(-eta, eta);
-    (0..size)
-        .map(|_| {
-            let coeffs = (0..n).map(|_| {
-                let coeff = range.sample(&mut rng); 
-                let modded_coeff = ((coeff % mod_val) + mod_val) % mod_val;
-                modded_coeff
-            }).collect();
-            Polynomial::new(coeffs, mod_val)
-        })
-        .collect()
-}
-
-// Generate a random oracle commitment
-fn random_oracle_commitment(matrix: &Vec<Polynomial>, party_number: u128) -> String {
-    // Converts each element of a matrix to a string and joins them
-    let mut combined = String::new();
-    for poly in matrix {
-        write!(&mut combined, "{}", poly.to_string()).expect("Failed to write to string");
-    }
-    // Convert party number to string and merge
-    write!(&mut combined, "{}", party_number).expect("Failed to write to string");
-    // Calculate SHA256 hash
-    let mut hasher = Sha256::new();
-    hasher.update(combined.as_bytes());
-    let hash_result = hasher.finalize();
-    // Convert hash value to hexadecimal string
-    format!("{:x}", hash_result)
-}
-
-// Calculate the sum of KxL random polynomial matrices and return a new matrix
-fn sum_matrices(matrices: &Vec<Vec<Polynomial>>) -> Vec<Polynomial> {
-    // Returns an empty vector if input is empty
-    if matrices.is_empty() || matrices[0].is_empty() {
-        return Vec::new();
-    }
-
-    let k = matrices[0].len(); 
-    let mod_val = matrices[0][0].mod_val; 
-    let n = matrices[0][0].coeffs.len(); 
-
-    // Initialize sum_matrix using mod_val and N
-    let mut sum_matrix = vec![Polynomial::new(vec![0; n], mod_val); k];
-
-    // Sum the polynomials in the same position for each matrix
-    for matrix in matrices {
-        for (i, poly) in matrix.iter().enumerate() {
-            sum_matrix[i] = sum_matrix[i].clone() + poly.clone();
-        }
-    }
-
-    sum_matrix
-}
-
-// Calculate the sum of tn matrices and return a new matrix
-fn sum_tn_matrices(tn: &Vec<Vec<Polynomial>>, q: &i128) -> Vec<Polynomial> {
-    if tn.is_empty() {
-        return Vec::new();
-    }
-
-    let num_cols = tn[0].len();
-    let mut result = vec![Polynomial::new(vec![0], q.clone()); num_cols];
-
-    for vec in tn {
-        for (i, poly) in vec.iter().enumerate() {
-            result[i] = result[i].clone().add(poly.clone());
-        }
-    }
-
-    result
-}
-
-// Generate a random oracle commitment for a vector of polynomials
-fn random_oracle_commitment_polynomials(
-    polynomials: &Vec<Polynomial>,
-    party_number: u128,
-) -> String {
-    let mut combined = String::new();
-    for poly in polynomials {
-        write!(&mut combined, "{}", poly.to_string()).expect("Failed to write to string");
-    }
-    write!(&mut combined, "{}", party_number).expect("Failed to write to string");
-    let mut hasher = Sha256::new();
-    hasher.update(combined.as_bytes());
-    let hash_result = hasher.finalize();
-    format!("{:x}", hash_result)
-}
+// // Generate a random oracle commitment for a vector of polynomials
+// fn random_oracle_commitment_polynomials(
+//     polynomials: &Vec<Polynomial>,
+//     party_number: u128,
+// ) -> String {
+//     let mut combined = String::new();
+//     for poly in polynomials {
+//         write!(&mut combined, "{}", poly.to_string()).expect("Failed to write to string");
+//     }
+//     write!(&mut combined, "{}", party_number).expect("Failed to write to string");
+//     let mut hasher = Sha256::new();
+//     hasher.update(combined.as_bytes());
+//     let hash_result = hasher.finalize();
+//     format!("{:x}", hash_result)
+// }
 
 //a. sample yn and compute wn
 fn sampleyn(
@@ -349,236 +287,236 @@ fn samplern(
         .collect()
 }
 
-// CGen function
-fn c_gen(message: &str, pk: &(Vec<Polynomial>, Vec<Polynomial>), q: i128, trapl: &usize, trapw: &usize) -> Vec<Vec<Polynomial>> {
-    // Initialize random number generator by calculating hash value from message and public key
-    let mut hasher = Sha256::new();
-    hasher.update(message.as_bytes());
-    for poly in &pk.0 {
-        hasher.update(poly.to_bytes()); // Polynomial byte representation
-    }
-    for poly in &pk.1 {
-        hasher.update(poly.to_bytes()); 
-    }
-    let result = hasher.finalize();
-    let seed = u64::from_ne_bytes(result[0..8].try_into().unwrap());
-    let mut rng = ChaCha20Rng::seed_from_u64(seed);
+// // CGen function
+// fn c_gen(message: &str, pk: &(Vec<Polynomial>, Vec<Polynomial>), q: i128, trapl: &usize, trapw: &usize) -> Vec<Vec<Polynomial>> {
+//     // Initialize random number generator by calculating hash value from message and public key
+//     let mut hasher = Sha256::new();
+//     hasher.update(message.as_bytes());
+//     for poly in &pk.0 {
+//         hasher.update(poly.to_bytes()); // Polynomial byte representation
+//     }
+//     for poly in &pk.1 {
+//         hasher.update(poly.to_bytes()); 
+//     }
+//     let result = hasher.finalize();
+//     let seed = u64::from_ne_bytes(result[0..8].try_into().unwrap());
+//     let mut rng = ChaCha20Rng::seed_from_u64(seed);
 
-    // Generate reversible 1*1 matrix
-    let ahat1_1 = generate_invertible_matrix(&mut rng, q);
-    let mut ahat1_j = generate_random_matrix(&mut rng,1, trapl + 2 * trapw - 1, q, 1)[0].clone();
+//     // Generate reversible 1*1 matrix
+//     let ahat1_1 = generate_invertible_matrix(&mut rng, q);
+//     let mut ahat1_j = generate_random_matrix(&mut rng,1, trapl + 2 * trapw - 1, q, 1)[0].clone();
 
-    let mut first_row = vec![ahat1_1[0][0].clone()];
-    first_row.append(&mut ahat1_j);
+//     let mut first_row = vec![ahat1_1[0][0].clone()];
+//     first_row.append(&mut ahat1_j);
 
-    let list1 = vec![
-        Polynomial::new(vec![0], q),
-        Polynomial::new(vec![1], q),
-    ];
-    let mut ahat2_j = generate_random_matrix(&mut rng,1, trapl + 2 * trapw - 1, q, 1)[0].clone();
+//     let list1 = vec![
+//         Polynomial::new(vec![0], q),
+//         Polynomial::new(vec![1], q),
+//     ];
+//     let mut ahat2_j = generate_random_matrix(&mut rng,1, trapl + 2 * trapw - 2, q, 1)[0].clone();
 
-    let mut second_row = list1;
-    second_row.append(&mut ahat2_j);
+//     let mut second_row = list1;
+//     second_row.append(&mut ahat2_j);
 
-    vec![first_row, second_row]
-}
+//     vec![first_row, second_row]
+// }
 
-// Function to calculate commitment
-fn commitck(
-    flat_wn: &Vec<Vec<Polynomial>>,
-    sampled_rn: &Vec<Vec<Polynomial>>,
-    ahat: &Vec<Vec<Polynomial>>,
-    party_number: usize,
-) -> (Vec<Vec<Polynomial>>, Vec<Vec<Vec<Polynomial>>>) {
-    let mut comn_per_party = vec![Vec::new(); party_number]; 
+// // Function to calculate commitment
+// fn commitck(
+//     flat_wn: &Vec<Vec<Polynomial>>,
+//     sampled_rn: &Vec<Vec<Polynomial>>,
+//     ahat: &Vec<Vec<Polynomial>>,
+//     party_number: usize,
+// ) -> (Vec<Vec<Polynomial>>, Vec<Vec<Vec<Polynomial>>>) {
+//     let mut comn_per_party = vec![Vec::new(); party_number]; 
 
-    for (p, (temp_wn, sampled_rn_poly)) in flat_wn.iter().zip(sampled_rn.iter()).enumerate() {
+//     for (p, (temp_wn, sampled_rn_poly)) in flat_wn.iter().zip(sampled_rn.iter()).enumerate() {
 
-        for (poly, sampled_poly) in temp_wn.iter().zip(sampled_rn_poly.iter()) {
-            let fleft = multiply_ahat_with_sampled_matrix(ahat, &sampled_poly.clone());
-            let fright_poly_matrix = combine_matrices_vertically(
-                &vec![Polynomial::new(vec![0], ahat[0][0].mod_val.clone())],
-                &vec![poly.clone()],
-            );
+//         for (poly, sampled_poly) in temp_wn.iter().zip(sampled_rn_poly.iter()) {
+//             let fleft = multiply_ahat_with_sampled_matrix(ahat, &sampled_poly.clone());
+//             let fright_poly_matrix = combine_matrices_vertically(
+//                 &vec![Polynomial::new(vec![0], ahat[0][0].mod_val.clone())],
+//                 &vec![poly.clone()],
+//             );
 
-            let formatted_fleft = format_openck_fleft(fleft);
-            let f = add_formatted_matrices(&formatted_fleft, &fright_poly_matrix);
+//             let formatted_fleft = format_openck_fleft(fleft);
+//             let f = add_formatted_matrices(&formatted_fleft, &fright_poly_matrix);
 
-            let party_index = p % party_number;
-            comn_per_party[party_index].extend(f);
-        }
-    }
+//             let party_index = p % party_number;
+//             comn_per_party[party_index].extend(f);
+//         }
+//     }
 
-    let matrix_zero = vec![vec![Polynomial::new(vec![0], ahat[0][0].mod_val.clone())]];
-    return (matrix_zero, comn_per_party);
-}
+//     let matrix_zero = vec![vec![Polynomial::new(vec![0], ahat[0][0].mod_val.clone())]];
+//     return (matrix_zero, comn_per_party);
+// }
 
-fn multiply_ahat_with_sampled_matrix(
-    ahat: &Vec<Vec<Polynomial>>,
-    sampled_poly: &Polynomial,
-) -> Vec<Vec<Polynomial>> {
-    let mut result = Vec::new();
-    for ahat_row in ahat.iter() {
-        let mut sum_poly = Polynomial::new(vec![0], sampled_poly.mod_val.clone());
+// fn multiply_ahat_with_sampled_matrix(
+//     ahat: &Vec<Vec<Polynomial>>,
+//     sampled_poly: &Polynomial,
+// ) -> Vec<Vec<Polynomial>> {
+//     let mut result = Vec::new();
+//     for ahat_row in ahat.iter() {
+//         let mut sum_poly = Polynomial::new(vec![0], sampled_poly.mod_val.clone());
 
-        // Multiply each polynomial in ahat_row by each coefficient in sampled_poly and add
-        for (ahat_poly, coeff) in ahat_row.iter().zip(sampled_poly.coeffs.iter()) {
-            let mut product_poly = ahat_poly.clone();
-            // Generate a new polynomial by multiplying each coefficient of ahat_poly by the coefficient of sampled_poly
-            for p in product_poly.coeffs.iter_mut() {
-                *p *= coeff;
-                *p %= &sampled_poly.mod_val;
-            }
-            sum_poly = sum_poly.add_ref(&product_poly); 
-        }
-        result.push(vec![sum_poly]); 
-    }
-    result
-}
+//         // Multiply each polynomial in ahat_row by each coefficient in sampled_poly and add
+//         for (ahat_poly, coeff) in ahat_row.iter().zip(sampled_poly.coeffs.iter()) {
+//             let mut product_poly = ahat_poly.clone();
+//             // Generate a new polynomial by multiplying each coefficient of ahat_poly by the coefficient of sampled_poly
+//             for p in product_poly.coeffs.iter_mut() {
+//                 *p *= coeff;
+//                 *p %= &sampled_poly.mod_val;
+//             }
+//             sum_poly = sum_poly.add_ref(&product_poly); 
+//         }
+//         result.push(vec![sum_poly]); 
+//     }
+//     result
+// }
 
-fn combine_matrices_vertically(
-    matrix_zero: &Vec<Polynomial>,
-    reconted_wj: &Vec<Polynomial>,
-) -> Vec<Vec<Vec<Polynomial>>> {
-    let mut combined_matrix = Vec::new();
+// fn combine_matrices_vertically(
+//     matrix_zero: &Vec<Polynomial>,
+//     reconted_wj: &Vec<Polynomial>,
+// ) -> Vec<Vec<Vec<Polynomial>>> {
+//     let mut combined_matrix = Vec::new();
 
-    for index in 0..matrix_zero.len() {
-        let mut combined_row = Vec::new();
-        combined_row.push(vec![matrix_zero[index].clone()]);
-        combined_row.push(vec![reconted_wj[index].clone()]);
-        combined_matrix.push(combined_row);
-    }
+//     for index in 0..matrix_zero.len() {
+//         let mut combined_row = Vec::new();
+//         combined_row.push(vec![matrix_zero[index].clone()]);
+//         combined_row.push(vec![reconted_wj[index].clone()]);
+//         combined_matrix.push(combined_row);
+//     }
 
-    combined_matrix
-}
+//     combined_matrix
+// }
 
-// Change fleft format to avoid extra nesting
-fn format_openck_fleft(openck_fleft: Vec<Vec<Polynomial>>) -> Vec<Vec<Vec<Polynomial>>> {
-    vec![openck_fleft]
-}
+// // Change fleft format to avoid extra nesting
+// fn format_openck_fleft(openck_fleft: Vec<Vec<Polynomial>>) -> Vec<Vec<Vec<Polynomial>>> {
+//     vec![openck_fleft]
+// }
 
-// Fix function that adds two multilayer matrices and returns a flat matrix 
-fn add_formatted_matrices(
-    matrix1: &Vec<Vec<Vec<Polynomial>>>,
-    matrix2: &Vec<Vec<Vec<Polynomial>>>,
-) -> Vec<Vec<Polynomial>> {
-    let mut combined_matrix = Vec::new();
+// // Fix function that adds two multilayer matrices and returns a flat matrix 
+// fn add_formatted_matrices(
+//     matrix1: &Vec<Vec<Vec<Polynomial>>>,
+//     matrix2: &Vec<Vec<Vec<Polynomial>>>,
+// ) -> Vec<Vec<Polynomial>> {
+//     let mut combined_matrix = Vec::new();
 
-    for (rows1, rows2) in matrix1.iter().zip(matrix2.iter()) {
-        for (row1, row2) in rows1.iter().zip(rows2.iter()) {
-            let mut combined_row = Vec::new();
-            for (poly1, poly2) in row1.iter().zip(row2.iter()) {
-                combined_row.push(poly1.add_ref(poly2));
-            }
-            combined_matrix.push(combined_row);
-        }
-    }
+//     for (rows1, rows2) in matrix1.iter().zip(matrix2.iter()) {
+//         for (row1, row2) in rows1.iter().zip(rows2.iter()) {
+//             let mut combined_row = Vec::new();
+//             for (poly1, poly2) in row1.iter().zip(row2.iter()) {
+//                 combined_row.push(poly1.add_ref(poly2));
+//             }
+//             combined_matrix.push(combined_row);
+//         }
+//     }
 
-    combined_matrix
-}
+//     combined_matrix
+// }
 
-//a. set com
-// Function to calculate total commitment from comn_per_party
-fn setcom(comn_per_party: Vec<Vec<Vec<Polynomial>>>, k: usize) -> Vec<Vec<Vec<Polynomial>>> {
-    if comn_per_party.is_empty() {
-        return Vec::new();
-    }
+// // a. set com
+// // Function to calculate total commitment from comn_per_party
+// fn setcom(comn_per_party: Vec<Vec<Vec<Polynomial>>>, k: usize) -> Vec<Vec<Vec<Polynomial>>> {
+//     if comn_per_party.is_empty() {
+//         return Vec::new();
+//     }
 
-    let num_rows = comn_per_party[0].len();
-    let num_cols = if num_rows > 0 {
-        comn_per_party[0][0].len()
-    } else {
-        0
-    };
+//     let num_rows = comn_per_party[0].len();
+//     let num_cols = if num_rows > 0 {
+//         comn_per_party[0][0].len()
+//     } else {
+//         0
+//     };
 
-    // Changed initialization method to store results in a two-dimensional list instead of a one-dimensional list
-    let mut grouped_results = vec![Vec::new(); num_rows / k]; // k個ずつグループ化するための二次元ベクター
+//     // Changed initialization method to store results in a two-dimensional list instead of a one-dimensional list
+//     let mut grouped_results = vec![Vec::new(); num_rows / k]; // k個ずつグループ化するための二次元ベクター
 
-    // Create a flat list to store temporary results
-    let mut temp_results = vec![vec![Polynomial::new(vec![0], Q); num_cols]; num_rows];
+//     // Create a flat list to store temporary results
+//     let mut temp_results = vec![vec![Polynomial::new(vec![0], Q); num_cols]; num_rows];
 
-    // Adds up all the elements of the input data
-    for party_coms in comn_per_party {
-        for (i, row_coms) in party_coms.iter().enumerate() {
-            for (j, com) in row_coms.iter().enumerate() {
-                temp_results[i][j] = temp_results[i][j].add_ref(com);
-            }
-        }
-    }
+//     // Adds up all the elements of the input data
+//     for party_coms in comn_per_party {
+//         for (i, row_coms) in party_coms.iter().enumerate() {
+//             for (j, com) in row_coms.iter().enumerate() {
+//                 temp_results[i][j] = temp_results[i][j].add_ref(com);
+//             }
+//         }
+//     }
 
-    // Divide one-dimensional results into two-dimensional groups
-    for (i, result) in temp_results.iter().enumerate() {
-        let group_index = i / k; 
-        grouped_results[group_index].push(result.clone()); 
-    }
+//     // Divide one-dimensional results into two-dimensional groups
+//     for (i, result) in temp_results.iter().enumerate() {
+//         let group_index = i / k; 
+//         grouped_results[group_index].push(result.clone()); 
+//     }
 
-    grouped_results
-}
+//     grouped_results
+// }
 
-//b. derive challenge
-// Random oracle h0 function
-fn h0(
-    com: &Vec<Vec<Vec<Polynomial>>>,
-    message: &str,
-    pk: &(Vec<Polynomial>, Vec<Polynomial>),
-    n: usize,
-    kappa: &usize,
-    q: &i128,
-) -> Polynomial {
-    let mut combined = String::new();
-    write!(&mut combined, "{}", message).unwrap();
+// // b. derive challenge
+// // Random oracle h0 function
+// fn h0(
+//     com: &Vec<Vec<Vec<Polynomial>>>,
+//     message: &str,
+//     pk: &(Vec<Polynomial>, Vec<Polynomial>),
+//     n: usize,
+//     kappa: &usize,
+//     q: &i128,
+// ) -> Polynomial {
+//     let mut combined = String::new();
+//     write!(&mut combined, "{}", message).unwrap();
 
-    // Adjusting to handle three-dimensional vector of polynomials
-    for poly_group in com {
-        for poly_list in poly_group {
-            for poly in poly_list {
-                write!(&mut combined, "{}", poly.to_string()).unwrap();
-            }
-        }
-    }
+//     // Adjusting to handle three-dimensional vector of polynomials
+//     for poly_group in com {
+//         for poly_list in poly_group {
+//             for poly in poly_list {
+//                 write!(&mut combined, "{}", poly.to_string()).unwrap();
+//             }
+//         }
+//     }
 
-    for poly in &pk.0 {
-        write!(&mut combined, "{}", poly.to_string()).unwrap();
-    }
+//     for poly in &pk.0 {
+//         write!(&mut combined, "{}", poly.to_string()).unwrap();
+//     }
 
-    for poly in &pk.1 {
-        write!(&mut combined, "{}", poly.to_string()).unwrap();
-    }
+//     for poly in &pk.1 {
+//         write!(&mut combined, "{}", poly.to_string()).unwrap();
+//     }
 
-    let mut hasher = Sha256::new();
-    hasher.update(combined.as_bytes());
-    let hash_result = hasher.finalize();
+//     let mut hasher = Sha256::new();
+//     hasher.update(combined.as_bytes());
+//     let hash_result = hasher.finalize();
 
-    let seed = u64::from_le_bytes([
-        hash_result[0],
-        hash_result[1],
-        hash_result[2],
-        hash_result[3],
-        hash_result[4],
-        hash_result[5],
-        hash_result[6],
-        hash_result[7],
-    ]);
+//     let seed = u64::from_le_bytes([
+//         hash_result[0],
+//         hash_result[1],
+//         hash_result[2],
+//         hash_result[3],
+//         hash_result[4],
+//         hash_result[5],
+//         hash_result[6],
+//         hash_result[7],
+//     ]);
 
-    let mut rng = StdRng::seed_from_u64(seed);
-    let mut positions = Vec::new();
+//     let mut rng = StdRng::seed_from_u64(seed);
+//     let mut positions = Vec::new();
 
-    while &positions.len() < kappa {
-        let pos = rng.gen_range(0..n);
-        if !positions.contains(&pos) {
-            positions.push(pos);
-        }
-    }
+//     while &positions.len() < kappa {
+//         let pos = rng.gen_range(0..n);
+//         if !positions.contains(&pos) {
+//             positions.push(pos);
+//         }
+//     }
 
-    positions.sort(); // Sort positions for consistency
+//     positions.sort(); // Sort positions for consistency
 
-    let mut coeffs = vec![0; n];
-    for &pos in &positions {
-        coeffs[pos] = if rng.gen() { 1 } else { q - 1 };
-    }
+//     let mut coeffs = vec![0; n];
+//     for &pos in &positions {
+//         coeffs[pos] = if rng.gen() { 1 } else { q - 1 };
+//     }
 
-    Polynomial::new(coeffs, q.clone())
-}
+//     Polynomial::new(coeffs, q.clone())
+// }
 
 // c. Computes a signature share using element-wise multiplication
 fn compute_zn_ntt(
@@ -748,109 +686,109 @@ fn validate_zn(zn_result: &Vec<Vec<Polynomial>>, large_b: f64) -> String {
     "continue".to_string()
 }
 
-// Fixed the relevant part in the `recon_wj` function
-fn recon_wj(
-    a_bar: &Vec<Vec<Polynomial>>,
-    challenge: &Polynomial,
-    tn: &Vec<Vec<Polynomial>>,
-    q: &i128,
-    zn: &Vec<Vec<Polynomial>>,
-) -> Vec<Vec<Polynomial>> {
-    let mut reconted_wj = Vec::new();
+// // Fixed the relevant part in the `recon_wj` function
+// fn recon_wj(
+//     a_bar: &Vec<Vec<Polynomial>>,
+//     challenge: &Polynomial,
+//     tn: &Vec<Vec<Polynomial>>,
+//     q: &i128,
+//     zn: &Vec<Vec<Polynomial>>,
+// ) -> Vec<Vec<Polynomial>> {
+//     let mut reconted_wj = Vec::new();
 
-    // Calculate challenge * tn and save it in the correct format
-    let recon_wn_rights: Vec<Vec<Polynomial>> = tn
-        .iter()
-        .map(|tn_row| {
-            tn_row
-                .iter()
-                .map(|tn_poly| {
-                    let mut product = challenge.clone().mul_ntt(&tn_poly.clone());
-                    product
-                })
-                .collect()
-        })
-        .collect();
+//     // Calculate challenge * tn and save it in the correct format
+//     let recon_wn_rights: Vec<Vec<Polynomial>> = tn
+//         .iter()
+//         .map(|tn_row| {
+//             tn_row
+//                 .iter()
+//                 .map(|tn_poly| {
+//                     let mut product = challenge.clone().mul_ntt(&tn_poly.clone());
+//                     product
+//                 })
+//                 .collect()
+//         })
+//         .collect();
 
-    // Multiply a_bar by zn and store the result
-    let addition_result = multiply_polynomial_matrix_vector(a_bar, zn, q);
+//     // Multiply a_bar by zn and store the result
+//     let addition_result = multiply_polynomial_matrix_vector(a_bar, zn, q);
 
-    // Subtract recon_wn_rights from addition_result as final result
-    for (addition_row, recon_wn_right_row) in addition_result.iter().zip(recon_wn_rights.iter()) {
-        let reconted_row: Vec<Polynomial> = addition_row
-            .iter()
-            .zip(recon_wn_right_row)
-            .map(|(addition_poly, recon_wn_right_poly)| {
-                let mut result = addition_poly.clone().sub(recon_wn_right_poly.clone());
-                result
-            })
-            .collect();
-        reconted_wj.push(reconted_row);
-    }
+//     // Subtract recon_wn_rights from addition_result as final result
+//     for (addition_row, recon_wn_right_row) in addition_result.iter().zip(recon_wn_rights.iter()) {
+//         let reconted_row: Vec<Polynomial> = addition_row
+//             .iter()
+//             .zip(recon_wn_right_row)
+//             .map(|(addition_poly, recon_wn_right_poly)| {
+//                 let mut result = addition_poly.clone().sub(recon_wn_right_poly.clone());
+//                 result
+//             })
+//             .collect();
+//         reconted_wj.push(reconted_row);
+//     }
 
-    reconted_wj
-}
+//     reconted_wj
+// }
 
-fn validate_openck(
-    sampled_rn: &Vec<Vec<Polynomial>>,
-    reconted_wj: &Vec<Vec<Polynomial>>,
-    comn_per_party: &Vec<Vec<Vec<Polynomial>>>,
-    large_b: f64,
-    ahat: &Vec<Vec<Polynomial>>,
-    k: usize,
-) -> String {
-    let mut poly_index = 0;
+// fn validate_openck(
+//     sampled_rn: &Vec<Vec<Polynomial>>,
+//     reconted_wj: &Vec<Vec<Polynomial>>,
+//     comn_per_party: &Vec<Vec<Vec<Polynomial>>>,
+//     large_b: f64,
+//     ahat: &Vec<Vec<Polynomial>>,
+//     k: usize,
+// ) -> String {
+//     let mut poly_index = 0;
 
-    for (j, (temp_reconted_wj, temp_sampled_rn)) in reconted_wj.iter().zip(sampled_rn.iter()).enumerate() {
+//     for (j, (temp_reconted_wj, temp_sampled_rn)) in reconted_wj.iter().zip(sampled_rn.iter()).enumerate() {
 
-        for (_poly, sampled_poly) in temp_reconted_wj.iter().zip(temp_sampled_rn.iter()) {
-            let openck_fleft = multiply_ahat_with_sampled_matrix(ahat, &sampled_poly.clone());
-            let openck_zero_x = combine_matrices_vertically(
-                &vec![Polynomial::new(vec![0], ahat[0][0].mod_val.clone())],
-                &vec![_poly.clone()],
-            );
-            let formatted_openck_fleft = format_openck_fleft(openck_fleft);
-            let openck_result = add_formatted_matrices(&formatted_openck_fleft, &openck_zero_x);
+//         for (_poly, sampled_poly) in temp_reconted_wj.iter().zip(temp_sampled_rn.iter()) {
+//             let openck_fleft = multiply_ahat_with_sampled_matrix(ahat, &sampled_poly.clone());
+//             let openck_zero_x = combine_matrices_vertically(
+//                 &vec![Polynomial::new(vec![0], ahat[0][0].mod_val.clone())],
+//                 &vec![_poly.clone()],
+//             );
+//             let formatted_openck_fleft = format_openck_fleft(openck_fleft);
+//             let openck_result = add_formatted_matrices(&formatted_openck_fleft, &openck_zero_x);
 
-            // Use poly_index to calculate the correct comn_per_party segment
-            let group_index = poly_index / k; // Calculate the index of the polynomial group in each sublist
-            let group_start = (poly_index % k) * k; // Calculate the starting position of each group
-            let party_group = &comn_per_party[group_index][group_start..group_start + k];
+//             // Use poly_index to calculate the correct comn_per_party segment
+//             let group_index = poly_index / k; // Calculate the index of the polynomial group in each sublist
+//             let group_start = (poly_index % k) * k; // Calculate the starting position of each group
+//             let party_group = &comn_per_party[group_index][group_start..group_start + k];
 
-            let norms = calculate_norms_for_polynomial_vector(&vec![sampled_poly.clone()]);
-            if norms.iter().any(|&n| n > large_b) || party_group != &openck_result {
-                return "abort".to_string();
-            }
-            poly_index += 1; // Update index after each polynomial
-        }
-    }
+//             let norms = calculate_norms_for_polynomial_vector(&vec![sampled_poly.clone()]);
+//             if norms.iter().any(|&n| n > large_b) || party_group != &openck_result {
+//                 return "abort".to_string();
+//             }
+//             poly_index += 1; // Update index after each polynomial
+//         }
+//     }
 
-    "continue".to_string()
-}
+//     "continue".to_string()
+// }
 
-// Function to compute the norm of each polynomial for data in Vec<Polynomial> format
-fn calculate_norms_for_polynomial_vector(polynomials: &Vec<Polynomial>) -> Vec<f64> {
-    polynomials
-        .iter()
-        .map(|poly| {
-            let mod_val_f64 = poly.mod_val.to_f64().unwrap_or(0.0); 
-            let half_mod = mod_val_f64 / 2.0;
+// // Function to compute the norm of each polynomial for data in Vec<Polynomial> format
+// fn calculate_norms_for_polynomial_vector(polynomials: &Vec<Polynomial>) -> Vec<f64> {
+//     polynomials
+//         .iter()
+//         .map(|poly| {
+//             let mod_val_f64 = poly.mod_val.to_f64().unwrap_or(0.0); 
+//             let half_mod = mod_val_f64 / 2.0;
 
-            poly.coeffs
-                .iter()
-                .fold(0.0, |acc, &coeff| {
-                    let coeff_f64 = coeff.to_f64().unwrap_or(0.0); 
-                    let adjusted_coeff = if coeff_f64 > half_mod {
-                        coeff_f64 - mod_val_f64 
-                    } else {
-                        coeff_f64
-                    };
-                    acc + adjusted_coeff.powi(2) 
-                })
-                .sqrt() // Calculate the square root of the sum of squares to obtain the norm
-        })
-        .collect()
-}
+//             poly.coeffs
+//                 .iter()
+//                 .fold(0.0, |acc, &coeff| {
+//                     let coeff_f64 = coeff.to_f64().unwrap_or(0.0); 
+//                     let adjusted_coeff = if coeff_f64 > half_mod {
+//                         coeff_f64 - mod_val_f64 
+//                     } else {
+//                         coeff_f64
+//                     };
+//                     acc + adjusted_coeff.powi(2) 
+//                 })
+//                 .sqrt() // Calculate the square root of the sum of squares to obtain the norm
+//         })
+//         .collect()
+// }
 
 // Function to perform signature calculations
 fn compute_signature(
